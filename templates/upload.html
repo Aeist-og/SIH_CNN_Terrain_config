@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terrain Recognition</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-left">
+            <h1>Terrain Recognition</h1>
+        </div>
+        <div class="navbar-right">
+            <p>Ministry of Defence</p>
+        </div>
+    </nav>
+    
+    <div class="content">
+        <form method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".jpg, .jpeg, .png">
+            <input type="submit" value="Upload and Predict">
+        </form>
+        
+        <p> <b> {{ prediction }} </b></p>
+        
+        {% if terrain_details %}
+        <h2>Terrain Details</h2>
+        <table>
+            <tr>
+                <th>Attribute</th>
+                <th>Value</th>
+            </tr>
+            {% for key, value in terrain_details.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td>{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% endif %}
+    </div>
+</body>
+</html>

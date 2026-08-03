@@ -1,0 +1,7 @@
+streamlit
+tensorflow-cpu==2.20.0
+pillow
+numpy
+pandas
+flask
+flask-cors

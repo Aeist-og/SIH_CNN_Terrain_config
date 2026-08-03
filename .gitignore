@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.venv/
+
+# Node & Frontend
+node_modules/
+dist/
+.expo/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
