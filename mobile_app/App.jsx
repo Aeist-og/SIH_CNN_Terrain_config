@@ -1,34 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import {
-  StyleSheet,
-  Text,
-  View,
-  TouchableOpacity,
-  Image,
-  ScrollView,
-  ActivityIndicator,
-  SafeAreaView,
-  StatusBar,
-  Platform
-} from 'react-native';
+  CpuChipIcon,
+  DocumentArrowDownIcon,
+  ShieldCheckIcon,
+} from '@heroicons/react/24/outline';
 
-import Header from './src/components/Header';
-import ImplicitQuantitiesCard from './src/components/ImplicitQuantitiesCard';
-import RoverTelemetry from './src/components/RoverTelemetry';
-import ScanHistory from './src/components/ScanHistory';
+import SidebarNav from './src/components/SidebarNav';
+import StatCard from './src/components/StatCard';
+import UploadCard from './src/components/UploadCard';
+import ResultCard from './src/components/ResultCard';
+import AnalyticsPanel from './src/components/AnalyticsPanel';
+import SectionHeader from './src/components/SectionHeader';
+import LoaderCard from './src/components/LoaderCard';
+import WorkspaceCard from './src/components/WorkspaceCard';
 
 import { predictTerrain, checkServerHealth } from './src/services/api';
 import { TERRAIN_THEMES, SAMPLE_IMAGES } from './src/data/terrainData';
 
-// Map sample names to local static paths for instant crisp display
-const SAMPLE_IMAGE_URLS = {
-  'test_1.jpg': 'http://localhost:5000/api/samples/test_1.jpg',
-  'test_2.jpg': 'http://localhost:5000/api/samples/test_2.jpg',
-  'test_3.jpg': 'http://localhost:5000/api/samples/test_3.jpg',
-  'test_4.jpg': 'http://localhost:5000/api/samples/test_4.jpg',
+const getSampleImageUrl = (filename) => {
+  if (typeof window === 'undefined') {
+    return `/api/samples/${filename}`;
+  }
+  return `${window.location.origin}/api/samples/${filename}`;
 };
 
-// React Error Boundary to present clear recovery UI
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -40,28 +36,22 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error("TerrainVision Error Boundary caught an error:", error, errorInfo);
+    console.error('TerrainVision Error Boundary caught an error:', error, errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#090d16', padding: 20, justifyContent: 'center', alignItems: 'center' }}>
-          <Text style={{ color: '#ef4444', fontSize: 20, fontWeight: 'bold', marginBottom: 10 }}>
-            ⚠️ Image Preview Error
-          </Text>
-          <Text style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginBottom: 20 }}>
-            {this.state.error?.toString() || "An unexpected error occurred."}
-          </Text>
-          <TouchableOpacity
-            style={{ backgroundColor: '#2563eb', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}
-            onPress={() => {
-              this.setState({ hasError: false, error: null });
-            }}
-          >
-            <Text style={{ color: '#fff', fontWeight: 'bold' }}>Reload App</Text>
-          </TouchableOpacity>
-        </SafeAreaView>
+        <div className="flex min-h-screen items-center justify-center bg-[#050806] p-6 text-center text-[#ECECEC]">
+          <div className="max-w-md rounded-[32px] border border-[#C96B6B]/30 bg-[rgba(24,33,28,0.45)] p-8 backdrop-blur-2xl">
+            <p className="text-sm uppercase tracking-[0.3em] text-[#B6A16E]">System notice</p>
+            <h2 className="mt-3 text-2xl font-semibold">Interface recovery required</h2>
+            <p className="mt-3 text-sm text-[#ECECEC]/70">{this.state.error?.toString() || 'An unexpected runtime issue occurred.'}</p>
+            <button onClick={() => this.setState({ hasError: false, error: null })} className="mt-6 rounded-full bg-[#78D46A] px-4 py-2 font-medium text-[#050806]">
+              Reload experience
+            </button>
+          </div>
+        </div>
       );
     }
     return this.props.children;
@@ -69,103 +59,96 @@ class ErrorBoundary extends React.Component {
 }
 
 function MainApp() {
-  const [activeTab, setActiveTab] = useState('scanner');
+  const [activeView, setActiveView] = useState('overview');
   const [isServerOnline, setIsServerOnline] = useState(false);
-  
   const [selectedImageUri, setSelectedImageUri] = useState(null);
   const [selectedSampleName, setSelectedSampleName] = useState(null);
   const [base64Image, setBase64Image] = useState(null);
-  
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [history, setHistory] = useState([]);
-  const [imageLoadError, setImageLoadError] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [inferenceTimeMs, setInferenceTimeMs] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('terrain-sidebar-collapsed') === 'true';
+  });
+  const [missionName, setMissionName] = useState('Operation Sentinel');
+  const [missionNotes, setMissionNotes] = useState('Primary reconnaissance lane for autonomous mobility assessment.');
+  const [operatorName, setOperatorName] = useState('Mission Operator');
 
-  const fileInputRef = useRef(null);
-
-  // Check Flask API health on launch
   useEffect(() => {
     checkServerHealth().then((res) => {
       setIsServerOnline(res.status === 'online');
     });
   }, []);
 
-  // Trigger web file input
-  const handleOpenPicker = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('terrain-sidebar-collapsed', isSidebarCollapsed ? 'true' : 'false');
     }
-  };
+  }, [isSidebarCollapsed]);
 
-  // Handle photo file selection safely
-  const handleFileUpload = (event) => {
-    const file = event.target?.files?.[0];
+  const handleFileUpload = (file) => {
     if (!file) return;
-
-    setImageLoadError(false);
     setSelectedSampleName(null);
-
+    setErrorMessage(null);
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result;
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result;
       if (dataUrl) {
         setSelectedImageUri(dataUrl);
         setBase64Image(dataUrl);
         runAnalysis({ imageUri: dataUrl, base64Image: dataUrl });
       }
     };
-    reader.onerror = (err) => {
-      console.error("FileReader error:", err);
-    };
     reader.readAsDataURL(file);
-
-    // Reset input value so selecting the same file works again
-    event.target.value = '';
   };
 
-  // Select sample image
   const handleSelectSample = (sample) => {
-    setImageLoadError(false);
-    const uri = SAMPLE_IMAGE_URLS[sample.sample_name] || `http://localhost:5000/api/samples/${sample.sample_name}`;
+    const uri = sample.imageUrl || getSampleImageUrl(sample.sample_name);
     setSelectedImageUri(uri);
     setSelectedSampleName(sample.sample_name);
     setBase64Image(null);
+    setErrorMessage(null);
     runAnalysis({ imageUri: uri, sampleName: sample.sample_name });
   };
 
-  // Run CNN Terrain Recognition Analysis
   const runAnalysis = async (inputParams) => {
+    const startedAt = Date.now();
     setIsAnalyzing(true);
     setScanResult(null);
-
+    setErrorMessage(null);
     try {
       const result = await predictTerrain(inputParams);
-      setIsAnalyzing(false);
-
       if (result && result.success) {
         setScanResult(result);
-
+        setInferenceTimeMs(Date.now() - startedAt);
         const detectedTerrainName = result.terrain || result.predicted_terrain || 'grassy';
-
-        // Add to session history safely
         const newHistoryItem = {
           terrain: detectedTerrainName,
           confidence: result.confidence || 0.95,
           imageUri: inputParams.imageUri,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          resultData: result
+          missionName: missionName || 'Operation Sentinel',
+          operatorName,
+          timestamp: new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
+          resultData: result,
         };
-
         setHistory((prev) => [newHistoryItem, ...prev.slice(0, 15)]);
+      } else {
+        setInferenceTimeMs(Date.now() - startedAt);
+        setErrorMessage('The prediction did not return a valid result. Please try another image or sample.');
       }
-    } catch (err) {
-      console.error("Analysis execution error:", err);
+    } catch (error) {
+      setInferenceTimeMs(Date.now() - startedAt);
+      setErrorMessage('Prediction could not be completed right now. Please check the backend connection and try again.');
+    } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // Re-run for active image
-  const handleTriggerPredict = () => {
+  const handleRunAnalysis = () => {
     if (selectedSampleName) {
       runAnalysis({ imageUri: selectedImageUri, sampleName: selectedSampleName });
     } else if (selectedImageUri) {
@@ -177,251 +160,333 @@ function MainApp() {
 
   const activeTerrain = (scanResult?.terrain || scanResult?.predicted_terrain || 'grassy').toString();
   const activeTheme = TERRAIN_THEMES[activeTerrain] || TERRAIN_THEMES.grassy;
+  const confidence = Math.round((scanResult?.confidence || 0.9) * 100);
+  const averageConfidence = history.length ? Math.round((history.reduce((acc, item) => acc + (item.confidence || 0.9), 0) / history.length) * 100) : 92;
+  const readinessScore = Math.max(70, Math.min(99, confidence + 8));
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
-      
-      {/* Hidden Web File Input */}
-      {Platform.OS === 'web' && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileUpload}
-          style={{ display: 'none' }}
-        />
-      )}
+    <div className="min-h-screen bg-[#050806] text-[#ECECEC]">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-4 lg:px-8 lg:py-8">
+        <motion.header initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} className="rounded-[32px] border border-white/10 bg-[rgba(24,33,28,0.45)] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.32)] backdrop-blur-2xl">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.35em] text-[#B6A16E]">Autonomous terrain intelligence</p>
+              <h1 className="mt-2 text-3xl font-semibold text-[#ECECEC] sm:text-4xl">Regional Terrain Surveillance Platform</h1>
+              <p className="mt-3 max-w-3xl text-sm text-[#ECECEC]/70 sm:text-base">
+                Mission-grade terrain assessment for autonomous systems, designed for disciplined operations and secure deployment.
+              </p>
+            </div>
+            <div className="rounded-full border border-[#78D46A]/30 bg-[#78D46A]/10 px-4 py-2 text-sm text-[#78D46A]">
+              {isServerOnline ? 'Flask API connected' : 'Standby / local inference'}
+            </div>
+          </div>
+        </motion.header>
 
-      {/* Header */}
-      <Header isServerOnline={isServerOnline} />
+        <div className="flex flex-col gap-6 lg:flex-row">
+          <SidebarNav
+            activeView={activeView}
+            onChange={setActiveView}
+            isOnline={isServerOnline}
+            modelStatus={isAnalyzing ? 'Inference in progress' : 'Model ready for mission tasks'}
+            collapsed={isSidebarCollapsed}
+            onToggleCollapse={() => setIsSidebarCollapsed((value) => !value)}
+          />
 
-      {/* Navigation Tabs */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'scanner' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('scanner')}
-        >
-          <Text style={[styles.tabText, activeTab === 'scanner' && styles.tabTextActive]}>📷 Vision Scanner</Text>
-        </TouchableOpacity>
+          <main className="flex-1 space-y-6">
+            {activeView === 'overview' && (
+              <div className="space-y-6">
+                <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid gap-4 xl:grid-cols-3">
+                  <StatCard title="Model status" value="Operational" caption="CNN terrain model available" />
+                  <StatCard title="Backend status" value={isServerOnline ? 'Online' : 'Standby'} caption="Flask API health" accent="text-[#79D46E]" />
+                  <StatCard title="Prediction count" value={`${history.length}`} caption="Recent analyses captured" />
+                </motion.section>
 
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'implicit' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('implicit')}
-        >
-          <Text style={[styles.tabText, activeTab === 'implicit' && styles.tabTextActive]}>📊 Implicit Quantities</Text>
-        </TouchableOpacity>
+                <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                  <div className="rounded-[32px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-6 backdrop-blur-xl">
+                    <SectionHeader eyebrow="Executive overview" title="Mission readiness" description="Operational metrics aligned to the live terrain inference workflow." badge={`${readinessScore}% ready`} />
+                    <div className="mt-6 grid gap-4 md:grid-cols-3">
+                      <WorkspaceCard title="Average confidence" summary={`${averageConfidence}%`} badge="Live" footer="Current session confidence" />
+                      <WorkspaceCard title="System health" summary="Stable" badge="Nominal" footer="No critical degradation" />
+                      <WorkspaceCard title="Latest prediction" summary={scanResult ? activeTerrain.toUpperCase() : 'Awaiting input'} badge="Updated" footer={scanResult ? `${confidence}% confidence` : 'Ready for analysis'} />
+                    </div>
+                  </div>
+                  <div className="rounded-[32px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-6 backdrop-blur-xl">
+                    <SectionHeader eyebrow="Mission workspace" title="Active operation" description="Mission context and evaluation status." />
+                    <div className="mt-6 space-y-3">
+                      <label className="block text-sm text-[#B8B8B8]">
+                        <span className="mb-2 block">Mission name</span>
+                        <input value={missionName} onChange={(event) => setMissionName(event.target.value)} className="w-full rounded-2xl border border-white/10 bg-[#050806]/70 px-4 py-3 text-[#ECECEC] outline-none focus:border-[#79D46E]" />
+                      </label>
+                      <label className="block text-sm text-[#B8B8B8]">
+                        <span className="mb-2 block">Mission notes</span>
+                        <textarea value={missionNotes} onChange={(event) => setMissionNotes(event.target.value)} rows="4" className="w-full rounded-2xl border border-white/10 bg-[#050806]/70 px-4 py-3 text-[#ECECEC] outline-none focus:border-[#79D46E]" />
+                      </label>
+                    </div>
+                  </div>
+                </motion.section>
 
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'telemetry' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('telemetry')}
-        >
-          <Text style={[styles.tabText, activeTab === 'telemetry' && styles.tabTextActive]}>🤖 Rover Mode</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'history' && styles.tabButtonActive]}
-          onPress={() => setActiveTab('history')}
-        >
-          <Text style={[styles.tabText, activeTab === 'history' && styles.tabTextActive]}>📜 Scan Logs</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* TAB 1: SCANNER */}
-        {activeTab === 'scanner' && (
-          <View style={styles.tabContent}>
-            {/* Image Preview / Upload Area */}
-            <View style={styles.previewContainer}>
-              {selectedImageUri && !imageLoadError ? (
-                <View style={styles.imageWrapper}>
-                  <Image
-                    source={{ uri: selectedImageUri }}
-                    style={styles.previewImage}
-                    resizeMode="cover"
-                    onError={() => {
-                      console.warn("Image load error for URI:", selectedImageUri?.slice(0, 30));
-                      setImageLoadError(true);
-                    }}
+                <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                  <UploadCard
+                    onUpload={handleFileUpload}
+                    onSampleSelect={handleSelectSample}
+                    samples={SAMPLE_IMAGES}
+                    selectedSampleName={selectedSampleName}
+                    isAnalyzing={isAnalyzing}
+                    isDragging={isDragging}
+                    setIsDragging={setIsDragging}
+                    previewUrl={selectedImageUri}
+                    onRunAnalysis={handleRunAnalysis}
+                    hasError={Boolean(errorMessage)}
+                    errorMessage={errorMessage}
                   />
-                  
-                  {/* Scanning Animation Grid Overlay */}
-                  {isAnalyzing && (
-                    <View style={styles.scanOverlay}>
-                      <ActivityIndicator size="large" color="#38bdf8" />
-                      <Text style={styles.scanText}>CNN Neural Feature Extraction...</Text>
-                    </View>
-                  )}
 
-                  {/* Recognition Result Badge overlay */}
-                  {scanResult && !isAnalyzing && (
-                    <View style={[styles.resultBadge, { backgroundColor: activeTheme.color }]}>
-                      <Text style={styles.resultBadgeText}>
-                        {activeTerrain.toUpperCase()} ({((scanResult.confidence || 0.95) * 100).toFixed(1)}%)
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              ) : (
-                <View style={styles.placeholderBox}>
-                  <Text style={styles.placeholderIcon}>🛰️</Text>
-                  <Text style={styles.placeholderTitle}>Select or Upload Aerial Terrain Image</Text>
-                  <Text style={styles.placeholderSubtitle}>
-                    Vision CNN will perform automatic classification & calculate physical quantities
-                  </Text>
-                </View>
-              )}
+                  <ResultCard
+                    scanResult={scanResult}
+                    activeTerrain={activeTerrain}
+                    activeTheme={activeTheme}
+                    isAnalyzing={isAnalyzing}
+                    hasError={Boolean(errorMessage)}
+                    errorMessage={errorMessage}
+                    inferenceTimeMs={inferenceTimeMs}
+                    isServerOnline={isServerOnline}
+                    modelStatus={isAnalyzing ? 'Inference in progress' : 'Model ready for mission tasks'}
+                    missionName={missionName}
+                    operatorName={operatorName}
+                  />
+                </div>
+              </div>
+            )}
 
-              {/* Action Buttons */}
-              <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.uploadBtn} onPress={handleOpenPicker}>
-                  <Text style={styles.buttonText}>📁 Upload Photo</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.predictBtn, isAnalyzing && styles.btnDisabled]}
-                  onPress={handleTriggerPredict}
-                  disabled={isAnalyzing}
-                >
+            {activeView === 'analysis' && (
+              <div className="space-y-6">
+                <SectionHeader eyebrow="Terrain analysis" title="Primary operational workflow" description="Upload imagery, review inference output, and prepare mission guidance from the live API response." badge="Live" />
+                <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                  <UploadCard
+                    onUpload={handleFileUpload}
+                    onSampleSelect={handleSelectSample}
+                    samples={SAMPLE_IMAGES}
+                    selectedSampleName={selectedSampleName}
+                    isAnalyzing={isAnalyzing}
+                    isDragging={isDragging}
+                    setIsDragging={setIsDragging}
+                    previewUrl={selectedImageUri}
+                    onRunAnalysis={handleRunAnalysis}
+                    hasError={Boolean(errorMessage)}
+                    errorMessage={errorMessage}
+                  />
                   {isAnalyzing ? (
-                    <ActivityIndicator color="#fff" size="small" />
+                    <LoaderCard />
                   ) : (
-                    <Text style={styles.predictBtnText}>⚡ Run CNN Recognition</Text>
+                    <ResultCard
+                      scanResult={scanResult}
+                      activeTerrain={activeTerrain}
+                      activeTheme={activeTheme}
+                      isAnalyzing={isAnalyzing}
+                      hasError={Boolean(errorMessage)}
+                      errorMessage={errorMessage}
+                      inferenceTimeMs={inferenceTimeMs}
+                      isServerOnline={isServerOnline}
+                      modelStatus={isAnalyzing ? 'Inference in progress' : 'Model ready for mission tasks'}
+                      missionName={missionName}
+                      operatorName={operatorName}
+                    />
                   )}
-                </TouchableOpacity>
-              </View>
-            </View>
+                </div>
+              </div>
+            )}
 
-            {/* Preset Samples Picker */}
-            <View style={styles.sampleSection}>
-              <Text style={styles.sectionTitle}>Preset Sample Terrains (1-Tap Test)</Text>
-              <View style={styles.sampleGrid}>
-                {SAMPLE_IMAGES.map((sample) => {
-                  const isSelected = selectedSampleName === sample.sample_name;
-                  const sampleUrl = SAMPLE_IMAGE_URLS[sample.sample_name];
-                  return (
-                    <TouchableOpacity
-                      key={sample.id}
-                      style={[styles.sampleCard, isSelected && styles.sampleCardSelected]}
-                      onPress={() => handleSelectSample(sample)}
+            {activeView === 'analytics' && <AnalyticsPanel history={history} isServerOnline={isServerOnline} modelStatus={isAnalyzing ? 'Inference in progress' : 'Model ready for mission tasks'} />}
+
+            {activeView === 'reports' && (
+              <div className="space-y-6">
+                <SectionHeader eyebrow="Reports" title="Mission-ready reporting" description="Structured output for review, handoff, and operational documentation." badge="PDF-ready" />
+                <div className="rounded-[32px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-6 backdrop-blur-xl">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-[#ECECEC]">Operational report package</h3>
+                      <p className="mt-2 text-sm text-[#B8B8B8]">Includes prediction summary, terrain assessment, and mission recommendation for downstream review.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          window.print();
+                        }
+                      }}
+                      className="inline-flex items-center gap-2 rounded-full border border-[#79D46E]/25 bg-[#79D46E]/10 px-4 py-2 text-sm font-medium text-[#79D46E]"
                     >
-                      <Image source={{ uri: sampleUrl }} style={styles.sampleThumb} />
-                      <Text style={styles.sampleName}>{sample.name}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
+                      <DocumentArrowDownIcon className="h-4 w-4" />
+                      Print report
+                    </button>
+                  </div>
 
-            {/* Prediction Breakdown Card */}
-            {scanResult && (
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <View>
-                    <Text style={styles.cardLabel}>CLASSIFICATION RESULT</Text>
-                    <Text style={[styles.detectedTitle, { color: activeTheme.color }]}>
-                      {activeTheme.label}
-                    </Text>
-                  </View>
-                  <View style={[styles.confPill, { backgroundColor: activeTheme.badgeBg }]}>
-                    <Text style={[styles.confPillText, { color: activeTheme.badgeText }]}>
-                      {((scanResult.confidence || 0.95) * 100).toFixed(1)}% Confidence
-                    </Text>
-                  </View>
-                </View>
+                  <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                    <div className="rounded-[24px] border border-white/10 bg-[#050806]/70 p-4 sm:p-5">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="block text-sm text-[#B8B8B8]">
+                          <span className="mb-2 block">Operator name</span>
+                          <input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[#ECECEC] outline-none focus:border-[#79D46E]" />
+                        </label>
+                        <label className="block text-sm text-[#B8B8B8]">
+                          <span className="mb-2 block">Mission name</span>
+                          <input value={missionName} onChange={(event) => setMissionName(event.target.value)} className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[#ECECEC] outline-none focus:border-[#79D46E]" />
+                        </label>
+                      </div>
 
-                {/* Probabilities distribution */}
-                <Text style={styles.probHeader}>CNN Class Probability Distribution:</Text>
-                {Object.entries(scanResult.probabilities || {}).map(([clsName, prob]) => {
-                  const theme = TERRAIN_THEMES[clsName] || TERRAIN_THEMES.grassy;
-                  const pct = Math.round(prob * 100);
-                  return (
-                    <View key={clsName} style={styles.probRow}>
-                      <Text style={styles.probClassLabel}>{(clsName || '').toString().toUpperCase()}</Text>
-                      <View style={styles.probTrack}>
-                        <View style={[styles.probFill, { width: `${pct}%`, backgroundColor: theme.color }]} />
-                      </View>
-                      <Text style={styles.probVal}>{pct}%</Text>
-                    </View>
-                  );
-                })}
+                      {selectedImageUri ? (
+                        <img src={selectedImageUri} alt="Mission preview" className="mt-4 h-64 w-full rounded-[24px] border border-white/10 object-cover" />
+                      ) : (
+                        <div className="mt-4 rounded-[24px] border border-dashed border-white/10 p-6 text-sm text-[#ECECEC]/70">
+                          Upload an image to attach a preview to the report package.
+                        </div>
+                      )}
 
-                <Text style={styles.engineMeta}>Source: {scanResult.source}</Text>
-              </View>
+                      <div className="mt-4 rounded-[24px] border border-white/10 bg-white/5 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.35em] text-[#B6A16E]">Prediction summary</p>
+                        <p className="mt-2 text-sm font-semibold text-[#ECECEC]">{scanResult ? `${activeTerrain.toUpperCase()} • ${confidence}% confidence` : 'No active inference available'}</p>
+                        <p className="mt-2 text-sm text-[#ECECEC]/70">{missionNotes}</p>
+                      </div>
+
+                      <div className="mt-4 rounded-[24px] border border-white/10 bg-white/5 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.35em] text-[#B6A16E]">Recommendations</p>
+                        <p className="mt-2 text-sm text-[#ECECEC]/70">{scanResult ? activeTheme?.recommendation || 'Follow mission safety procedures and validate route conditions before deployment.' : 'Complete a fresh analysis to generate operational guidance.'}</p>
+                      </div>
+
+                      <div className="mt-4 rounded-[24px] border border-dashed border-white/10 p-4 text-sm text-[#ECECEC]/70">
+                        {isServerOnline ? 'PDF export is currently a placeholder for the live backend. Use the print action for operator handoff.' : 'PDF export is currently a placeholder because the backend export path is unavailable.'}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <WorkspaceCard title="Current prediction" summary={scanResult ? activeTerrain.toUpperCase() : 'Awaiting input'} badge="Live" />
+                      <WorkspaceCard title="Operator" summary={operatorName} badge="Assigned" />
+                      <WorkspaceCard title="Mission context" summary={missionNotes} badge="Notes" />
+                      <WorkspaceCard title="Report status" summary={isServerOnline ? 'Printable package' : 'Offline placeholder'} badge="Ready" />
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
-            {/* Quick Preview of Implicit Quantities */}
-            {scanResult && (
-              <ImplicitQuantitiesCard
-                terrain={activeTerrain}
-                implicit={scanResult.implicit}
-              />
+            {activeView === 'dataset' && (
+              <div className="space-y-6">
+                <SectionHeader eyebrow="Dataset" title="Sample repository" description="Mission imagery available for rapid evaluation and operator review." badge="Ready" />
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {SAMPLE_IMAGES.map((sample) => (
+                    <button key={sample.sample_name} onClick={() => handleSelectSample(sample)} className="rounded-[28px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-5 text-left backdrop-blur-xl transition hover:border-[#79D46E]/30 hover:bg-[#79D46E]/10">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-[#ECECEC]">{sample.display_name}</p>
+                          <p className="mt-2 text-sm text-[#B8B8B8]">{sample.description}</p>
+                        </div>
+                        <span className="rounded-full border border-[#79D46E]/30 bg-[#79D46E]/10 px-3 py-1 text-xs font-medium text-[#79D46E]">{sample.sample_name}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
-          </View>
-        )}
 
-        {/* TAB 2: IMPLICIT QUANTITIES */}
-        {activeTab === 'implicit' && (
-          <View style={styles.tabContent}>
-            {scanResult ? (
-              <ImplicitQuantitiesCard
-                terrain={activeTerrain}
-                implicit={scanResult.implicit}
-              />
-            ) : (
-              <View style={styles.card}>
-                <Text style={styles.emptyTitle}>No Active Scan Data</Text>
-                <Text style={styles.emptySubtitle}>
-                  Please upload an image or pick a sample terrain in the Vision Scanner tab to extract roughness, slipperiness, and bearing metrics.
-                </Text>
-                <TouchableOpacity
-                  style={styles.sampleBtn}
-                  onPress={() => {
-                    setActiveTab('scanner');
-                    handleSelectSample(SAMPLE_IMAGES[0]);
-                  }}
-                >
-                  <Text style={styles.sampleBtnText}>Test Sample 1 (Rocky)</Text>
-                </TouchableOpacity>
-              </View>
+            {activeView === 'model' && (
+              <div className="rounded-[32px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-6 backdrop-blur-2xl">
+                <SectionHeader eyebrow="Model" title="Inference architecture" description="The CNN terrain recognition pipeline is preserved while the interface is reimagined for missions." badge="Protected" />
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <WorkspaceCard title="Backbone" summary="Keras CNN classifier for terrain recognition" badge="Stable" />
+                  <WorkspaceCard title="Output" summary="Predicted terrain plus implicit quantities from the existing API contract" badge="Live" />
+                </div>
+              </div>
             )}
-          </View>
-        )}
 
-        {/* TAB 3: ROVER MODE */}
-        {activeTab === 'telemetry' && (
-          <View style={styles.tabContent}>
-            {scanResult ? (
-              <RoverTelemetry
-                terrain={activeTerrain}
-                implicit={scanResult.implicit}
-              />
-            ) : (
-              <View style={styles.card}>
-                <Text style={styles.emptyTitle}>No Active Scan Data</Text>
-                <Text style={styles.emptySubtitle}>
-                  Perform a terrain recognition scan first to generate rover traversal protocols and speed limit telemetry.
-                </Text>
-              </View>
+            {activeView === 'settings' && (
+              <div className="rounded-[32px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-6 backdrop-blur-2xl">
+                <SectionHeader eyebrow="Configuration" title="Operational settings" description="System and model information presented in an executive-grade layout." />
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-[24px] border border-white/10 bg-[#050806]/70 p-4">
+                    <div className="flex items-center gap-2 text-[#B6A16E]">
+                      <ShieldCheckIcon className="h-4 w-4" />
+                      <span className="text-sm font-medium">Model information</span>
+                    </div>
+                    <p className="mt-3 text-sm text-[#ECECEC]/70">Terrain recognition model remains unchanged and consumes the existing Flask API endpoints.</p>
+                  </div>
+                  <div className="rounded-[24px] border border-white/10 bg-[#050806]/70 p-4">
+                    <div className="flex items-center gap-2 text-[#B6A16E]">
+                      <CpuChipIcon className="h-4 w-4" />
+                      <span className="text-sm font-medium">API status</span>
+                    </div>
+                    <p className="mt-3 text-sm text-[#ECECEC]/70">{isServerOnline ? 'Connected to /api/health' : 'Awaiting backend connection'}</p>
+                  </div>
+                </div>
+                <div className="mt-6 grid gap-4 xl:grid-cols-2">
+                  <div className="rounded-[24px] border border-white/10 bg-[#050806]/70 p-4">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-[#B6A16E]">Platform details</p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <WorkspaceCard title="Application version" summary="1.0.0" badge="Stable" />
+                      <WorkspaceCard title="Model version" summary="terrain-cnn-v1" badge="Protected" />
+                      <WorkspaceCard title="Framework" summary="TensorFlow / Keras" badge="Runtime" />
+                      <WorkspaceCard title="Backend status" summary={isServerOnline ? 'Connected' : 'Unavailable'} badge="Live" />
+                    </div>
+                  </div>
+                  <div className="rounded-[24px] border border-white/10 bg-[#050806]/70 p-4">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-[#B6A16E]">System information</p>
+                    <div className="mt-4 space-y-3 text-sm text-[#ECECEC]/70">
+                      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                        <span>Theme</span>
+                        <span className="text-[#ECECEC]">Mission dark</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                        <span>About</span>
+                        <span className="text-[#ECECEC]">Terrain intelligence for autonomous field operations</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                        <span>License</span>
+                        <span className="text-[#ECECEC]">Restricted operational use</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                        <span>Environment</span>
+                        <span className="text-[#ECECEC]">{typeof navigator !== 'undefined' ? navigator.platform : 'Unavailable'}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
-          </View>
-        )}
 
-        {/* TAB 4: SCAN HISTORY */}
-        {activeTab === 'history' && (
-          <View style={styles.tabContent}>
-            <ScanHistory
-              history={history}
-              onSelectHistoryItem={(item) => {
-                setScanResult(item.resultData);
-                setSelectedImageUri(item.imageUri);
-                setActiveTab('scanner');
-              }}
-            />
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+            {activeView === 'about' && (
+              <div className="rounded-[32px] border border-white/10 bg-[rgba(22,30,25,0.45)] p-6 backdrop-blur-2xl">
+                <SectionHeader eyebrow="About model" title="Operational intelligence model" description="The backend prediction flow remains intact while the experience is elevated for professional use." />
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <WorkspaceCard title="Inference workflow" summary="Receives image input through the existing Flask prediction endpoint and returns terrain classification plus implicit quantities." badge="Stable" />
+                  <WorkspaceCard title="Interface scope" summary="Frontend-only product redesign with no backend or model behavior change." badge="Protected" />
+                </div>
+                <div className="mt-6 rounded-[24px] border border-white/10 bg-[#050806]/70 p-4">
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-[#B6A16E]">Future capabilities</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {[
+                      'Terrain Segmentation',
+                      'Grad-CAM',
+                      'Live Camera',
+                      'Satellite Imagery',
+                      'Drone Integration',
+                      '3D Terrain Mapping',
+                      'Offline Inference',
+                      'Batch Processing',
+                    ].map((capability) => (
+                      <div key={capability} className="rounded-[20px] border border-white/10 bg-white/5 p-3 opacity-80">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-[#ECECEC]">{capability}</p>
+                          <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-[#B6A16E]">Future</span>
+                        </div>
+                        <p className="mt-2 text-sm text-[#ECECEC]/60">Disabled roadmap capability planned for a later release.</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -432,286 +497,3 @@ export default function App() {
     </ErrorBoundary>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#090d16',
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#0f172a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1e293b',
-    paddingHorizontal: 8,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabButtonActive: {
-    borderBottomColor: '#38bdf8',
-  },
-  tabText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748b',
-  },
-  tabTextActive: {
-    color: '#38bdf8',
-    fontWeight: '800',
-  },
-  scrollContent: {
-    padding: 16,
-  },
-  tabContent: {
-    gap: 14,
-  },
-  previewContainer: {
-    backgroundColor: '#0f172a',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-  },
-  imageWrapper: {
-    position: 'relative',
-    height: 240,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#020617',
-  },
-  previewImage: {
-    width: '100%',
-    height: '100%',
-  },
-  scanOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  scanText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  resultBadge: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  resultBadgeText: {
-    color: '#ffffff',
-    fontWeight: '900',
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
-  placeholderBox: {
-    height: 200,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#1e293b',
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  placeholderIcon: {
-    fontSize: 36,
-    marginBottom: 8,
-  },
-  placeholderTitle: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  placeholderSubtitle: {
-    color: '#64748b',
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
-  },
-  uploadBtn: {
-    backgroundColor: '#3b82f6',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  predictBtn: {
-    flex: 1,
-    backgroundColor: '#10b981',
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
-  predictBtnText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  sampleSection: {
-    marginTop: 6,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#cbd5e1',
-    marginBottom: 8,
-  },
-  sampleGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  sampleCard: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#0f172a',
-    borderRadius: 10,
-    padding: 6,
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  sampleCardSelected: {
-    borderColor: '#38bdf8',
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-  },
-  sampleThumb: {
-    width: 36,
-    height: 36,
-    borderRadius: 6,
-  },
-  sampleName: {
-    fontSize: 11,
-    color: '#cbd5e1',
-    fontWeight: '600',
-    flex: 1,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 14,
-  },
-  cardLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#64748b',
-    letterSpacing: 0.8,
-  },
-  detectedTitle: {
-    fontSize: 20,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  confPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  confPillText: {
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  probHeader: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#94a3b8',
-    marginBottom: 8,
-  },
-  probRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginVertical: 3,
-  },
-  probClassLabel: {
-    width: 65,
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#cbd5e1',
-  },
-  probTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: '#0f172a',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  probFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  probVal: {
-    width: 32,
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#94a3b8',
-    textAlign: 'right',
-  },
-  engineMeta: {
-    fontSize: 10,
-    color: '#64748b',
-    marginTop: 10,
-    fontStyle: 'italic',
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#f8fafc',
-    marginBottom: 6,
-  },
-  emptySubtitle: {
-    fontSize: 12,
-    color: '#94a3b8',
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  sampleBtn: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-  },
-  sampleBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-});

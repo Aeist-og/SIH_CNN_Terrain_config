@@ -12,6 +12,12 @@ class ApiServerTestCase(unittest.TestCase):
         app.config['TESTING'] = True
         self.client = app.test_client()
 
+    def test_root_endpoint(self):
+        response = self.client.get('/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Terrain Recognition API', response.data)
+        self.assertIn(b'/api/health', response.data)
+
     def test_health_endpoint(self):
         response = self.client.get('/api/health')
         self.assertEqual(response.status_code, 200)

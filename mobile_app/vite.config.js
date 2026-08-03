@@ -27,6 +27,17 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    host: true
+    host: true,
+  },
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'framer-motion'],
+          charts: ['recharts'],
+        },
+      },
+    },
   },
 });

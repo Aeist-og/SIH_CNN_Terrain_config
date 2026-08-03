@@ -3,7 +3,7 @@ import io
 import base64
 import numpy as np
 from PIL import Image
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from tensorflow.keras.models import load_model # type: ignore
 from tensorflow.keras.preprocessing.image import img_to_array # type: ignore
@@ -13,6 +13,7 @@ CORS(app)
 
 MODEL_PATH = "model/terrain_recognition_model.h5"
 SAMPLES_DIR = "static/samples"
+FRONTEND_DIST_DIR = os.path.join(os.path.dirname(__file__), "mobile_app", "dist")
 
 # Load the CNN model
 print(f"Loading CNN model from {MODEL_PATH}...")
@@ -24,6 +25,32 @@ except Exception as e:
     model = None
 
 TERRAIN_CLASSES = ['grassy', 'marshy', 'rocky', 'sandy', 'snowy']
+
+@app.route('/', methods=['GET'])
+def index():
+    index_path = os.path.join(FRONTEND_DIST_DIR, 'index.html')
+    if os.path.exists(index_path):
+        return send_file(index_path, mimetype='text/html')
+
+    return """
+    <!doctype html>
+    <html lang=\"en\">
+    <head>
+        <meta charset=\"utf-8\">
+        <title>Terrain Recognition API</title>
+    </head>
+    <body>
+        <h1>Terrain Recognition API</h1>
+        <p>The API is running.</p>
+        <p>The redesigned frontend build is not available yet. Please build the web app first.</p>
+        <ul>
+            <li><a href=\"/api/health\">/api/health</a></li>
+            <li><a href=\"/api/samples\">/api/samples</a></li>
+            <li><a href=\"/api/predict\">/api/predict</a></li>
+        </ul>
+    </body>
+    </html>
+    """
 
 IMPLICIT_QUANTITIES = {
     'grassy': {
@@ -256,6 +283,21 @@ def get_samples():
 @app.route('/api/samples/<filename>', methods=['GET'])
 def serve_sample(filename):
     return send_from_directory(SAMPLES_DIR, filename)
+
+@app.route('/<path:path>', methods=['GET'])
+def serve_frontend(path):
+    if path.startswith('api/') or path == 'api':
+        return jsonify({'error': 'Not found'}), 404
+
+    asset_path = os.path.join(FRONTEND_DIST_DIR, path)
+    if path and os.path.exists(asset_path):
+        return send_from_directory(FRONTEND_DIST_DIR, path)
+
+    index_path = os.path.join(FRONTEND_DIST_DIR, 'index.html')
+    if os.path.exists(index_path):
+        return send_file(index_path, mimetype='text/html')
+
+    return jsonify({'error': 'Frontend build not found'}), 404
 
 @app.route('/api/predict', methods=['POST'])
 def predict():

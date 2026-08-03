@@ -1,13 +1,25 @@
 import { DEFAULT_IMPLICIT_QUANTITIES } from '../data/terrainData';
 
-// Laptop LAN IP for mobile phone & local dev
-let API_HOST_IP = '10.154.200.222';
-let API_BASE_URL = `http://${API_HOST_IP}:5000/api`;
+let API_HOST_IP = '';
+let API_BASE_URL = '';
+
+function getBaseApiUrl() {
+  if (API_BASE_URL) return API_BASE_URL;
+
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    if (origin && origin !== 'null') {
+      return `${origin}/api`;
+    }
+  }
+
+  return '/api';
+}
 
 export function setCustomApiHost(ip) {
   if (ip) {
     API_HOST_IP = ip.trim();
-    API_BASE_URL = `http://${API_HOST_IP}:5000/api`;
+    API_BASE_URL = `/api`;
   }
 }
 
@@ -21,8 +33,9 @@ export function getApiHost() {
  */
 export async function predictTerrain({ imageUri, sampleName, base64Image }) {
   const tryUrls = [
-    API_BASE_URL,
-    'http://localhost:5000/api'
+    getBaseApiUrl(),
+    'http://localhost:5000/api',
+    '/api'
   ];
 
   for (const baseUrl of tryUrls) {
@@ -119,8 +132,9 @@ export async function predictTerrain({ imageUri, sampleName, base64Image }) {
 
 export async function checkServerHealth() {
   const tryUrls = [
-    API_BASE_URL,
-    'http://localhost:5000/api'
+    getBaseApiUrl(),
+    'http://localhost:5000/api',
+    '/api'
   ];
 
   for (const baseUrl of tryUrls) {
