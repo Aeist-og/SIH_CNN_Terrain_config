@@ -112,6 +112,16 @@ export default function CommunityView({ onTriggerToast, currentUser }) {
     loadCommunityDb();
   }, []);
 
+  const filteredWorks = works.filter((w) => {
+    const matchesTerrain = filterTerrain === 'all' || (w.terrain && w.terrain.toLowerCase() === filterTerrain.toLowerCase());
+    const matchesSearch =
+      !searchQuery ||
+      (w.title && w.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (w.author && w.author.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (w.summary && w.summary.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesTerrain && matchesSearch;
+  });
+
   const handleLike = (id) => {
     setWorks((prev) =>
       prev.map((w) => (w.id === id ? { ...w, likes: w.likes + 1 } : w))

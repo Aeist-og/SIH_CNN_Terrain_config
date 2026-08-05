@@ -12,6 +12,7 @@ import Toast from './src/components/workspace/Toast';
 import ContextDrawer from './src/components/workspace/ContextDrawer';
 import LandingView from './src/components/workspace/LandingView';
 import CommunityView from './src/components/workspace/CommunityView';
+import AuthView from './src/components/workspace/AuthView';
 
 import { predictTerrain, checkServerHealth, fetchDbHistory, fetchDbProfile, saveDbProfile } from './src/services/api';
 import { TERRAIN_THEMES } from './src/data/terrainData';
@@ -377,11 +378,26 @@ function MainApp() {
     imageUri: h.imageUri
   }));
 
+  const [isAuthPage, setIsAuthPage] = useState(false);
+
+  if (isAuthPage) {
+    return (
+      <AuthView
+        onLoginSuccess={(userPayload) => {
+          setIsAuthPage(false);
+          handleLoginSuccess(userPayload);
+        }}
+        onBackToLanding={() => setIsAuthPage(false)}
+      />
+    );
+  }
+
   if (isLandingPage) {
     return (
       <LandingView
         onEnterWorkspace={() => setIsLandingPage(false)}
         onLoginSuccess={handleLoginSuccess}
+        onOpenAuth={() => setIsAuthPage(true)}
       />
     );
   }

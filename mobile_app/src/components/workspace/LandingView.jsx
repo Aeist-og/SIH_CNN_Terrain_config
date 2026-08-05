@@ -92,15 +92,15 @@ export default function LandingView({ onEnterWorkspace, onLoginSuccess }) {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => { setAuthTab('login'); setIsAuthOpen(true); }}
+            onClick={() => onOpenAuth?.('login')}
             className="btn btn-ghost text-xs"
           >
             Sign In
           </button>
           <button
             type="button"
-            onClick={() => { setAuthTab('signup'); setIsAuthOpen(true); }}
-            className="btn btn-primary text-xs"
+            onClick={() => onOpenAuth?.('signup')}
+            className="btn btn-primary text-xs shadow-md shadow-[#10b981]/15"
           >
             Get Started
           </button>
