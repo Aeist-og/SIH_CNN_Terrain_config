@@ -1,360 +1,339 @@
 import os
 import io
-import base64
-import numpy as np
+import time
+import logging
 from PIL import Image
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 from flask_cors import CORS
-from tensorflow.keras.models import load_model # type: ignore
-from tensorflow.keras.preprocessing.image import img_to_array # type: ignore
+
+from model_pipeline.config import SAMPLES_DIR, MODEL_VERSION, TERRAIN_CLASSES
+from model_pipeline.preprocessing import load_image_from_bytes, decode_base64_image
+from model_pipeline.inference import TerrainPredictor
+from model_pipeline.reports import generate_pdf_report
+import database
+
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s'
+)
 
 app = Flask(__name__)
-CORS(app)
+# Restrict maximum upload payload to 16MB to prevent DoS memory exhaustion
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-MODEL_PATH = "model/terrain_recognition_model.h5"
-SAMPLES_DIR = "static/samples"
-FRONTEND_DIST_DIR = os.path.join(os.path.dirname(__file__), "mobile_app", "dist")
+FRONTEND_DIST_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "mobile_app", "dist"))
 
-# Load the CNN model
-print(f"Loading CNN model from {MODEL_PATH}...")
-try:
-    model = load_model(MODEL_PATH)
-    print("CNN model loaded successfully!")
-except Exception as e:
-    print(f"Error loading model: {e}")
-    model = None
+# Initialize model predictor singleton
+predictor = TerrainPredictor()
 
-TERRAIN_CLASSES = ['grassy', 'marshy', 'rocky', 'sandy', 'snowy']
+@app.errorhandler(404)
+def handle_404(e):
+    """Clean JSON 404 handler for unknown routes or API endpoints."""
+    if request.path.startswith('/api/') or request.is_json or request.accept_mimetypes.accept_json:
+        return jsonify({
+            'success': False,
+            'error': 'Not Found',
+            'message': f'Requested API resource or endpoint "{request.path}" does not exist.'
+        }), 404
+    
+    # Fallback to SPA index.html if available
+    index_path = os.path.join(FRONTEND_DIST_DIR, 'index.html')
+    if os.path.exists(index_path):
+        return send_from_directory(FRONTEND_DIST_DIR, 'index.html')
+    
+    return jsonify({
+        'success': False,
+        'error': 'Not Found',
+        'message': f'Requested resource "{request.path}" does not exist.'
+    }), 404
+
+@app.errorhandler(405)
+def handle_405(e):
+    """Clean JSON 405 Method Not Allowed handler."""
+    return jsonify({
+        'success': False,
+        'error': 'Method Not Allowed',
+        'message': f'HTTP method {request.method} is not supported for endpoint "{request.path}".'
+    }), 405
+
+@app.errorhandler(413)
+def handle_413(e):
+    """Payload Too Large handler."""
+    return jsonify({
+        'success': False,
+        'error': 'Payload Too Large',
+        'message': 'Uploaded file exceeds the maximum allowed payload size limit of 16MB.'
+    }), 413
+
+@app.errorhandler(500)
+def handle_500(e):
+    """Clean JSON 500 Internal Server Error handler."""
+    logging.error(f"Internal server error encountered: {e}", exc_info=True)
+    return jsonify({
+        'success': False,
+        'error': 'Internal Server Error',
+        'message': 'An internal processing error occurred on the server.'
+    }), 500
 
 @app.route('/', methods=['GET'])
 def index():
+    """Serve index.html from React build or return API status notice."""
     index_path = os.path.join(FRONTEND_DIST_DIR, 'index.html')
     if os.path.exists(index_path):
-        return send_file(index_path, mimetype='text/html')
+        return send_from_directory(FRONTEND_DIST_DIR, 'index.html')
 
     return """
     <!doctype html>
-    <html lang=\"en\">
+    <html lang="en">
     <head>
-        <meta charset=\"utf-8\">
-        <title>Terrain Recognition API</title>
+        <meta charset="utf-8">
+        <title>TerrainVision AI - API Service</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #070B08; color: #EDF1EC; padding: 40px; }
+            h1 { color: #10B981; }
+            a { color: #34D399; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+            code { background: #121814; padding: 4px 8px; border-radius: 4px; color: #34D399; }
+        </style>
     </head>
     <body>
-        <h1>Terrain Recognition API</h1>
-        <p>The API is running.</p>
-        <p>The redesigned frontend build is not available yet. Please build the web app first.</p>
+        <h1>TerrainVision AI API Service</h1>
+        <p>The backend inference server is active and online.</p>
+        <p>Supported Endpoints:</p>
         <ul>
-            <li><a href=\"/api/health\">/api/health</a></li>
-            <li><a href=\"/api/samples\">/api/samples</a></li>
-            <li><a href=\"/api/predict\">/api/predict</a></li>
+            <li><a href="/api/health"><code>GET /api/health</code></a> (or <code>/health</code>)</li>
+            <li><a href="/api/samples"><code>GET /api/samples</code></a> (or <code>/samples</code>)</li>
+            <li><code>POST /api/predict</code> (or <code>/predict</code>)</li>
+            <li><code>POST /api/report/pdf</code> (or <code>/report/pdf</code>)</li>
         </ul>
     </body>
     </html>
-    """
-
-IMPLICIT_QUANTITIES = {
-    'grassy': {
-        'roughness': {
-            'qualitative': 'Low',
-            'value_ra': 0.25, # Ra in µm / relative scale
-            'score': 25,
-            'description': 'Smooth surface with minor micro-textural variations.'
-        },
-        'slipperiness': {
-            'qualitative': 'Moderate',
-            'friction_coefficient': 0.55, # μ
-            'score': 45,
-            'description': 'Moderate traction; slight slippage if dew or moisture is present.'
-        },
-        'treacherousness': {
-            'qualitative': 'Low',
-            'hazard_level': 1,
-            'score': 15,
-            'description': 'Minimal traversal risk for conventional and autonomous rovers.'
-        },
-        'vegetation': {
-            'density_pct': 85,
-            'qualitative': 'High'
-        },
-        'hydration': {
-            'moisture_pct': 35,
-            'qualitative': 'Moderate'
-        },
-        'surface_stability': {
-            'status': 'Stable',
-            'bearing_capacity_kpa': 180,
-            'score': 88
-        },
-        'perception_telemetry': {
-            'traversal_safety_index': 92,
-            'recommended_max_speed_kmh': 45,
-            'wheel_grip_index': 85,
-            'recommended_drive_mode': 'Normal / 2WD'
-        }
-    },
-    'marshy': {
-        'roughness': {
-            'qualitative': 'Moderate',
-            'value_ra': 0.48,
-            'score': 50,
-            'description': 'Uneven water-logged soil with submerged roots and mud pools.'
-        },
-        'slipperiness': {
-            'qualitative': 'High',
-            'friction_coefficient': 0.22,
-            'score': 85,
-            'description': 'Extremely slick surface. High probability of traction loss.'
-        },
-        'treacherousness': {
-            'qualitative': 'High',
-            'hazard_level': 4,
-            'score': 80,
-            'description': 'High risk of sinking, wheels spinning, and vehicle immobilization.'
-        },
-        'vegetation': {
-            'density_pct': 45,
-            'qualitative': 'Moderate'
-        },
-        'hydration': {
-            'moisture_pct': 92,
-            'qualitative': 'Very High'
-        },
-        'surface_stability': {
-            'status': 'Unstable (Deformable)',
-            'bearing_capacity_kpa': 45,
-            'score': 25
-        },
-        'perception_telemetry': {
-            'traversal_safety_index': 38,
-            'recommended_max_speed_kmh': 12,
-            'wheel_grip_index': 30,
-            'recommended_drive_mode': '4WD Low / Mud & Ruts'
-        }
-    },
-    'rocky': {
-        'roughness': {
-            'qualitative': 'High',
-            'value_ra': 0.88,
-            'score': 90,
-            'description': 'Jagged boulders, loose cobble, and severe angular surface relief.'
-        },
-        'slipperiness': {
-            'qualitative': 'Low',
-            'friction_coefficient': 0.75,
-            'score': 20,
-            'description': 'High dry mechanical interlock and strong tire friction.'
-        },
-        'treacherousness': {
-            'qualitative': 'Moderate',
-            'hazard_level': 3,
-            'score': 60,
-            'description': 'Risk of chassis scrape, tipping, and tire puncture.'
-        },
-        'vegetation': {
-            'density_pct': 10,
-            'qualitative': 'Low'
-        },
-        'hydration': {
-            'moisture_pct': 12,
-            'qualitative': 'Low'
-        },
-        'surface_stability': {
-            'status': 'Stable / Hard Substrate',
-            'bearing_capacity_kpa': 350,
-            'score': 95
-        },
-        'perception_telemetry': {
-            'traversal_safety_index': 74,
-            'recommended_max_speed_kmh': 18,
-            'wheel_grip_index': 78,
-            'recommended_drive_mode': '4WD Low / Rock Crawl'
-        }
-    },
-    'sandy': {
-        'roughness': {
-            'qualitative': 'Moderate',
-            'value_ra': 0.42,
-            'score': 45,
-            'description': 'Granular particulate medium with shifting ripples and dunes.'
-        },
-        'slipperiness': {
-            'qualitative': 'Moderate',
-            'friction_coefficient': 0.45,
-            'score': 55,
-            'description': 'Moderate shear slip under heavy torque; grain displacement.'
-        },
-        'treacherousness': {
-            'qualitative': 'Low - Moderate',
-            'hazard_level': 2,
-            'score': 35,
-            'description': 'Risk of wheel dig-in if momentum is lost on loose steep slopes.'
-        },
-        'vegetation': {
-            'density_pct': 5,
-            'qualitative': 'Very Low'
-        },
-        'hydration': {
-            'moisture_pct': 8,
-            'qualitative': 'Very Low'
-        },
-        'surface_stability': {
-            'status': 'Loose / Granular',
-            'bearing_capacity_kpa': 95,
-            'score': 55
-        },
-        'perception_telemetry': {
-            'traversal_safety_index': 81,
-            'recommended_max_speed_kmh': 30,
-            'wheel_grip_index': 62,
-            'recommended_drive_mode': 'Sand Mode / Deflated Pressure'
-        }
-    },
-    'snowy': {
-        'roughness': {
-            'qualitative': 'High',
-            'value_ra': 0.65,
-            'score': 70,
-            'description': 'Snow drifts, compacted ice ridges, and sub-zero surface crust.'
-        },
-        'slipperiness': {
-            'qualitative': 'High',
-            'friction_coefficient': 0.18,
-            'score': 90,
-            'description': 'Severe ice lubrication. Ultra-low dynamic friction coefficient.'
-        },
-        'treacherousness': {
-            'qualitative': 'High',
-            'hazard_level': 4,
-            'score': 82,
-            'description': 'High probability of skidding, loss of steering, and icy drift.'
-        },
-        'vegetation': {
-            'density_pct': 5,
-            'qualitative': 'Very Low'
-        },
-        'hydration': {
-            'moisture_pct': 60,
-            'qualitative': 'High (Frozen)'
-        },
-        'surface_stability': {
-            'status': 'Variable / Slippery',
-            'bearing_capacity_kpa': 60,
-            'score': 35
-        },
-        'perception_telemetry': {
-            'traversal_safety_index': 42,
-            'recommended_max_speed_kmh': 15,
-            'wheel_grip_index': 25,
-            'recommended_drive_mode': 'Snow & Ice Lock / Chains'
-        }
-    }
-}
-
-def preprocess_image_file(pil_img):
-    img = pil_img.resize((224, 224)).convert('RGB')
-    img_array = img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array = img_array / 255.0
-    return img_array
+    """, 200
 
 @app.route('/api/health', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health():
+    """Health check endpoint."""
     return jsonify({
+        'success': True,
         'status': 'online',
-        'model_loaded': model is not None,
-        'supported_classes': TERRAIN_CLASSES
+        'model_loaded': predictor.is_ready(),
+        'model_version': MODEL_VERSION,
+        'supported_classes': TERRAIN_CLASSES,
+        'timestamp': time.time()
     })
 
 @app.route('/api/samples', methods=['GET'])
+@app.route('/samples', methods=['GET'])
 def get_samples():
+    """List available sample dataset images."""
     if not os.path.exists(SAMPLES_DIR):
-        return jsonify({'samples': []})
+        return jsonify({'success': True, 'samples': []})
     
-    files = [f for f in os.listdir(SAMPLES_DIR) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
-    sample_list = []
-    for f in files:
-        file_path = os.path.join(SAMPLES_DIR, f)
-        sample_list.append({
-            'filename': f,
-            'url': f'/api/samples/{f}'
-        })
-    return jsonify({'samples': sample_list})
+    try:
+        files = [f for f in os.listdir(SAMPLES_DIR) if f.lower().endswith(('.jpg', '.png', '.jpeg', '.webp'))]
+        sample_list = []
+        
+        terrain_map = {
+          'test_1.jpg': 'Rocky Slope',
+          'test_2.jpg': 'Waterlogged Marsh',
+          'test_3.jpg': 'Meadow Pasture',
+          'test_4.jpg': 'Desert Dunes',
+          'test_5.jpg': 'Arctic Ice'
+        }
+
+        for f in sorted(files):
+            pretty_name = terrain_map.get(f, f.replace('_', ' ').replace('.jpg', '').replace('.png', '').title())
+            sample_list.append({
+                'filename': f,
+                'name': pretty_name,
+                'url': f'/api/samples/{f}'
+            })
+        return jsonify({'success': True, 'samples': sample_list})
+    except Exception as e:
+        logging.error(f"Error fetching samples: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/samples/<filename>', methods=['GET'])
+@app.route('/samples/<filename>', methods=['GET'])
 def serve_sample(filename):
-    return send_from_directory(SAMPLES_DIR, filename)
+    """Serve sample image asset."""
+    safe_filename = os.path.basename(filename)
+    return send_from_directory(SAMPLES_DIR, safe_filename)
+
+@app.route('/api/predict', methods=['POST'])
+@app.route('/predict', methods=['POST'])
+def predict():
+    """
+    Perform terrain classification, confidence threshold evaluation, and Grad-CAM explainability.
+    Accepts:
+    - Multipart file upload under key 'image'
+    - JSON payload with 'image_base64'
+    - JSON payload with 'sample_name'
+    """
+    try:
+        pil_image = None
+
+        # 1. Parse Image Input
+        if 'image' in request.files:
+            file = request.files['image']
+            if file.filename != '':
+                image_bytes = file.read()
+                pil_image = load_image_from_bytes(image_bytes)
+
+        elif request.is_json:
+            data = request.get_json(silent=True) or {}
+            if 'image_base64' in data and data['image_base64']:
+                pil_image = decode_base64_image(data['image_base64'])
+            elif 'sample_name' in data and data['sample_name']:
+                sample_path = os.path.join(SAMPLES_DIR, os.path.basename(data['sample_name']))
+                if os.path.exists(sample_path):
+                    pil_image = Image.open(sample_path).convert('RGB')
+
+        if pil_image is None:
+            return jsonify({
+                'success': False,
+                'error': 'No valid image provided. Please provide a file upload ("image"), "image_base64", or "sample_name".'
+            }), 400
+
+        # 2. Execute Inference Pipeline
+        result = predictor.predict(pil_image)
+        if result and result.get('success'):
+            database.save_analysis(result)
+        return jsonify(result), 200
+
+    except Exception as e:
+        logging.error(f"Error during terrain prediction: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f"Inference processing failure: {str(e)}"}), 500
+
+@app.route('/api/db/history', methods=['GET', 'POST'])
+def db_history():
+    """Retrieve or insert analysis history records in SQLite database."""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        database.save_analysis(data)
+        return jsonify({'success': True}), 200
+    rows = database.get_analyses()
+    return jsonify({'success': True, 'history': rows}), 200
+
+@app.route('/api/db/profile', methods=['GET', 'POST'])
+def db_profile():
+    """Retrieve or update operator user profile in SQLite database."""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        database.save_profile(data)
+        return jsonify({'success': True}), 200
+    email = request.args.get('email', 'operator@terrainvision.ai')
+    profile = database.get_profile(email)
+    return jsonify({'success': True, 'profile': profile}), 200
+
+@app.route('/api/db/community', methods=['GET'])
+def db_community_posts():
+    """Retrieve community field works and comments from SQLite database."""
+    posts = database.get_community_posts()
+    return jsonify({'success': True, 'posts': posts}), 200
+
+@app.route('/api/db/community/comment', methods=['POST'])
+def db_community_comment():
+    """Add a review comment to a community field report."""
+    data = request.get_json(silent=True) or {}
+    post_id = data.get('post_id')
+    author = data.get('author', 'SIH Operator')
+    text = data.get('text', '')
+    if post_id and text:
+        database.add_community_comment(post_id, author, text)
+        return jsonify({'success': True}), 200
+    return jsonify({'success': False, 'error': 'Missing post_id or text'}), 400
+
+@app.route('/api/db/community/like', methods=['POST'])
+def db_community_like():
+    """Like a community field report."""
+    data = request.get_json(silent=True) or {}
+    post_id = data.get('post_id')
+    if post_id:
+        database.like_community_post(post_id)
+        return jsonify({'success': True}), 200
+    return jsonify({'success': False, 'error': 'Missing post_id'}), 400
+
+@app.route('/api/db/community/post', methods=['POST'])
+def db_community_create_post():
+    """Publish a model report / field analysis to the community hub."""
+    data = request.get_json(silent=True) or {}
+    if database.add_community_post(data):
+        return jsonify({'success': True}), 200
+    return jsonify({'success': False, 'error': 'Failed to publish post'}), 500
+
+@app.route('/api/db/export/excel', methods=['GET'])
+@app.route('/api/db/export/csv', methods=['GET'])
+def db_export_excel():
+    """Export SQLite database records as CSV/Excel spreadsheet download."""
+    csv_data = database.export_to_csv()
+    return Response(
+        csv_data,
+        mimetype='text/csv',
+        headers={
+            'Content-Disposition': 'attachment; filename=terrainvision-database-export.csv',
+            'Content-Type': 'text/csv'
+        }
+    )
+
+@app.route('/api/report/pdf', methods=['POST'])
+@app.route('/report/pdf', methods=['POST'])
+def export_pdf_report():
+    """
+    Generate and stream a professional PDF evaluation report for terrain classification.
+    Accepts JSON containing prediction results or parameters.
+    """
+    try:
+        pil_image = None
+        data = request.get_json(silent=True) or {}
+
+        # Extract image if provided in request
+        if 'image_base64' in data and data['image_base64']:
+            try:
+                pil_image = decode_base64_image(data['image_base64'])
+            except Exception:
+                pass
+        elif 'sample_name' in data and data['sample_name']:
+            sample_path = os.path.join(SAMPLES_DIR, os.path.basename(data['sample_name']))
+            if os.path.exists(sample_path):
+                pil_image = Image.open(sample_path).convert('RGB')
+
+        # If payload contains result object nested
+        prediction_payload = data.get('result') or data
+
+        pdf_bytes = generate_pdf_report(prediction_payload, orig_pil_image=pil_image)
+
+        return Response(
+            pdf_bytes,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': 'attachment; filename=terrainvision-assessment-report.pdf',
+                'Content-Type': 'application/pdf'
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error generating PDF report: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f"Failed to generate PDF report: {str(e)}"}), 500
 
 @app.route('/<path:path>', methods=['GET'])
 def serve_frontend(path):
-    if path.startswith('api/') or path == 'api':
-        return jsonify({'error': 'Not found'}), 404
-
-    asset_path = os.path.join(FRONTEND_DIST_DIR, path)
-    if path and os.path.exists(asset_path):
-        return send_from_directory(FRONTEND_DIST_DIR, path)
+    """Fallback static handler for SPA routing with strict path traversal validation."""
+    if path:
+        target_path = os.path.realpath(os.path.join(FRONTEND_DIST_DIR, path))
+        if target_path.startswith(FRONTEND_DIST_DIR) and os.path.exists(target_path) and os.path.isfile(target_path):
+            relative_path = os.path.relpath(target_path, FRONTEND_DIST_DIR)
+            return send_from_directory(FRONTEND_DIST_DIR, relative_path)
 
     index_path = os.path.join(FRONTEND_DIST_DIR, 'index.html')
     if os.path.exists(index_path):
-        return send_file(index_path, mimetype='text/html')
+        return send_from_directory(FRONTEND_DIST_DIR, 'index.html')
 
-    return jsonify({'error': 'Frontend build not found'}), 404
-
-@app.route('/api/predict', methods=['POST'])
-def predict():
-    try:
-        pil_image = None
-        
-        # Check if file is uploaded via multipart/form-data
-        if 'image' in request.files:
-            file = request.files['image']
-            pil_image = Image.open(file.stream)
-        elif request.is_json:
-            data = request.get_json()
-            if 'image_base64' in data:
-                b64_str = data['image_base64']
-                if ',' in b64_str:
-                    b64_str = b64_str.split(',')[1]
-                image_bytes = base64.b64decode(b64_str)
-                pil_image = Image.open(io.BytesIO(image_bytes))
-            elif 'sample_name' in data:
-                sample_path = os.path.join(SAMPLES_DIR, data['sample_name'])
-                if os.path.exists(sample_path):
-                    pil_image = Image.open(sample_path)
-        
-        if pil_image is None:
-            return jsonify({'error': 'No valid image provided. Provide multipart file "image", "image_base64", or "sample_name".'}), 400
-
-        # Perform inference
-        if model is not None:
-            processed_img = preprocess_image_file(pil_image)
-            preds = model.predict(processed_img)[0]
-            pred_idx = int(np.argmax(preds))
-            terrain = TERRAIN_CLASSES[pred_idx]
-            confidence = float(preds[pred_idx])
-            
-            all_probabilities = {TERRAIN_CLASSES[i]: float(preds[i]) for i in range(len(TERRAIN_CLASSES))}
-        else:
-            # Fallback mock prediction if model is not loaded
-            terrain = 'grassy'
-            confidence = 0.95
-            all_probabilities = {c: (0.95 if c == 'grassy' else 0.01) for c in TERRAIN_CLASSES}
-
-        # Get implicit quantities for the predicted terrain
-        implicit = IMPLICIT_QUANTITIES.get(terrain, IMPLICIT_QUANTITIES['grassy'])
-
-        return jsonify({
-            'success': True,
-            'predicted_terrain': terrain,
-            'confidence': confidence,
-            'all_probabilities': all_probabilities,
-            'implicit_quantities': implicit
-        })
-
-    except Exception as e:
-        print("Prediction error:", e)
-        return jsonify({'error': str(e)}), 500
+    return jsonify({'success': False, 'error': 'Not Found', 'message': f'Frontend asset or API endpoint "{path}" not found'}), 404
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    print(f"Starting Terrain Recognition API server on port {port}...")
+    print(f"Starting TerrainVision AI Backend API on http://0.0.0.0:{port}...")
     app.run(host='0.0.0.0', port=port, debug=False)

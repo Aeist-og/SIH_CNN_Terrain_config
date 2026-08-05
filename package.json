@@ -1,0 +1,25 @@
+{
+  "name": "sih-cnn-terrain-recognition",
+  "version": "1.2.0",
+  "description": "Smart India Hackathon Terrain Recognition System",
+  "main": "start.js",
+  "scripts": {
+    "start": "node start.js",
+    "dev": "node start.js",
+    "backend": "python api_server.py",
+    "frontend": "npm run dev --prefix mobile_app",
+    "build": "npm run build --prefix mobile_app",
+    "test": "python tests/test_api.py"
+  },
+  "keywords": [
+    "sih",
+    "cnn",
+    "terrain-recognition",
+    "flask",
+    "react",
+    "gradcam",
+    "reportlab"
+  ],
+  "author": "SIH Development Team",
+  "license": "MIT"
+}
