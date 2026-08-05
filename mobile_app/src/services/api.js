@@ -164,11 +164,10 @@ export async function predictTerrain({ sampleName, base64Image, imageFile }) {
         }
       }
     } catch (error) {
-      // Continue to next endpoint or mock fallback
+      // Continue
     }
   }
 
-  // Graceful Fallback / Demo Mock Mode if backend is unreachable
   return getMockFallbackPrediction(sampleName);
 }
 
@@ -209,6 +208,9 @@ export async function downloadPdfReport(reportPayload) {
   return { success: false, error: 'Failed to generate PDF report from backend server.' };
 }
 
+/**
+ * Export Database to CSV/Excel Spreadsheet
+ */
 export async function exportDatabaseSpreadsheet() {
   const tryUrls = [
     getBaseApiUrl(),
@@ -236,6 +238,129 @@ export async function exportDatabaseSpreadsheet() {
     }
   }
   return { success: false, error: 'Database export unavailable.' };
+}
+
+/**
+ * Fetch Analysis History from SQLite Database
+ */
+export async function fetchDbHistory() {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/history`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) return data.history;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+/**
+ * Fetch User Profile from SQLite Database
+ */
+export async function fetchDbProfile(email) {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/profile?email=${encodeURIComponent(email || '')}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) return data.profile;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+/**
+ * Save User Profile to SQLite Database
+ */
+export async function saveDbProfile(profileData) {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileData)
+      });
+      if (res.ok) return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+/**
+ * Fetch Community Posts from SQLite Database
+ */
+export async function fetchDbCommunity() {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/community`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) return data.posts;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+/**
+ * Post Community Comment to SQLite Database
+ */
+export async function postDbCommunityComment(postId, author, text) {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/community/comment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_id: postId, author, text })
+      });
+      if (res.ok) return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+/**
+ * Like Community Post in SQLite Database
+ */
+export async function postDbCommunityLike(postId) {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/community/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_id: postId })
+      });
+      if (res.ok) return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+/**
+ * Publish Community Article to SQLite Database
+ */
+export async function postDbCommunityArticle(postPayload) {
+  const tryUrls = [getBaseApiUrl(), 'http://localhost:5000/api', '/api'];
+  for (const baseUrl of tryUrls) {
+    try {
+      const res = await fetch(`${baseUrl}/db/community/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(postPayload)
+      });
+      if (res.ok) return true;
+    } catch (e) {}
+  }
+  return false;
 }
 
 export async function checkServerHealth() {

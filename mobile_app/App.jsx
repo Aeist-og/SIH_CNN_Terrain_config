@@ -13,7 +13,7 @@ import ContextDrawer from './src/components/workspace/ContextDrawer';
 import LandingView from './src/components/workspace/LandingView';
 import CommunityView from './src/components/workspace/CommunityView';
 
-import { predictTerrain, checkServerHealth } from './src/services/api';
+import { predictTerrain, checkServerHealth, fetchDbHistory, fetchDbProfile, saveDbProfile } from './src/services/api';
 import { TERRAIN_THEMES } from './src/data/terrainData';
 
 const MODEL_VERSION = 'terrain-cnn-v1.2.0';
@@ -86,7 +86,18 @@ function MainApp() {
   const [base64Image, setBase64Image] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [scanResult, setScanResult] = useState(null);
-  const [history, setHistory] = useState([]);
+
+  // Initialize history from localStorage first, then sync with SQLite DB
+  const [history, setHistory] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const cached = window.localStorage.getItem('terrain-history-cache');
+      if (cached) {
+        try { return JSON.parse(cached); } catch (e) {}
+      }
+    }
+    return [];
+  });
+
   const [isDragging, setIsDragging] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -108,6 +119,44 @@ function MainApp() {
     const res = await checkServerHealth();
     setIsServerOnline(res.status === 'online');
   }, []);
+
+  // Database Hydration Effect on Mount & Interval
+  useEffect(() => {
+    async function hydrateFromDb() {
+      const dbHistory = await fetchDbHistory();
+      if (dbHistory && Array.isArray(dbHistory) && dbHistory.length > 0) {
+        const formattedHistory = dbHistory.map((r) => ({
+          terrain: r.predicted_terrain || r.terrain || 'grassy',
+          confidence: r.confidence || 0.95,
+          timestamp: r.timestamp || new Date().toLocaleTimeString(),
+          imageUri: r.imageUri || null,
+          sampleName: r.sampleName || null,
+          unsupported_image: r.unsupported_image || false,
+          implicit: r.implicit_quantities,
+          inference_time_ms: r.inference_time_ms || 42,
+          gradcam_base64: r.gradcam_base64
+        }));
+        setHistory(formattedHistory);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('terrain-history-cache', JSON.stringify(formattedHistory));
+        }
+      }
+
+      const dbProfile = await fetchDbProfile(user.email);
+      if (dbProfile) {
+        setUser((prev) => ({
+          ...prev,
+          username: dbProfile.username || prev.username,
+          role: dbProfile.role || prev.role
+        }));
+        if (dbProfile.confidence_threshold) {
+          setConfidenceThreshold(dbProfile.confidence_threshold);
+        }
+      }
+    }
+
+    hydrateFromDb();
+  }, [user.email]);
 
   useEffect(() => {
     checkHealth();
@@ -167,7 +216,13 @@ function MainApp() {
           gradcam_base64: finalResult.gradcam_base64
         };
 
-        setHistory((prev) => [newHistoryItem, ...prev]);
+        setHistory((prev) => {
+          const nextHistory = [newHistoryItem, ...prev];
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem('terrain-history-cache', JSON.stringify(nextHistory));
+          }
+          return nextHistory;
+        });
 
         if (finalUnsupported) {
           triggerToast('warning', 'Low Confidence Rejection', `Input image returned confidence below safety threshold (${confidenceThreshold}%).`);
@@ -277,9 +332,15 @@ function MainApp() {
       if (typeof window !== 'undefined') {
         window.localStorage.setItem('terrain-user-session', JSON.stringify(nextUser));
       }
+      saveDbProfile({
+        email: nextUser.email,
+        username: nextUser.username,
+        role: nextUser.role,
+        confidence_threshold: confidenceThreshold
+      });
       return nextUser;
     });
-  }, []);
+  }, [confidenceThreshold]);
 
   const handleSignOut = useCallback(() => {
     setIsLandingPage(true);

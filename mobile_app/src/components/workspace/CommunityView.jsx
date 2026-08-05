@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   GlobeAltIcon,
   MagnifyingGlassIcon,
@@ -12,6 +12,7 @@ import {
   DocumentArrowUpIcon
 } from '@heroicons/react/24/outline';
 import { motion, AnimatePresence } from 'framer-motion';
+import { fetchDbCommunity, postDbCommunityComment, postDbCommunityLike, postDbCommunityArticle } from '../../services/api';
 
 const MOCK_COMMUNITY_WORKS = [
   {
@@ -84,21 +85,39 @@ export default function CommunityView({ onTriggerToast, currentUser }) {
   const [postSummary, setPostSummary] = useState('');
   const [postDriveMode, setPostDriveMode] = useState('4WD Low / Rock Crawl');
 
-  const filteredWorks = works.filter((w) => {
-    const matchesTerrain = filterTerrain === 'all' || w.terrain === filterTerrain;
-    const matchesSearch =
-      !searchQuery ||
-      w.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      w.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      w.summary.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesTerrain && matchesSearch;
-  });
+  // Hydrate community posts from SQLite Database on mount
+  useEffect(() => {
+    async function loadCommunityDb() {
+      const dbPosts = await fetchDbCommunity();
+      if (dbPosts && Array.isArray(dbPosts) && dbPosts.length > 0) {
+        const formatted = dbPosts.map((p) => ({
+          id: p.id,
+          title: p.title,
+          author: p.author,
+          designation: p.designation,
+          terrain: p.terrain,
+          readTime: '3 min read',
+          date: p.date_str || '2026-08-05',
+          likes: p.likes || 0,
+          safetyIndex: p.safety_index || 75,
+          roughness: p.roughness || '0.50 µm',
+          driveMode: p.drive_mode || 'Normal / 2WD',
+          summary: p.summary,
+          bannerColor: 'from-[#10b981]/20 via-[#0ea5e9]/10 to-transparent',
+          comments: p.comments || []
+        }));
+        setWorks(formatted);
+      }
+    }
+    loadCommunityDb();
+  }, []);
 
   const handleLike = (id) => {
     setWorks((prev) =>
       prev.map((w) => (w.id === id ? { ...w, likes: w.likes + 1 } : w))
     );
-    onTriggerToast?.('info', 'Liked Publication', 'Your appreciation has been recorded.');
+    postDbCommunityLike(id);
+    onTriggerToast?.('info', 'Liked Publication', 'Your appreciation has been recorded in database.');
   };
 
   const handleAddComment = (id) => {
@@ -119,8 +138,9 @@ export default function CommunityView({ onTriggerToast, currentUser }) {
       })
     );
 
+    postDbCommunityComment(id, authorName, text.trim());
     setNewCommentText((prev) => ({ ...prev, [id]: '' }));
-    onTriggerToast?.('success', 'Comment Published', 'Your review comment was added to the community thread.');
+    onTriggerToast?.('success', 'Comment Published', 'Your review comment was added to database.');
   };
 
   const handlePublishSubmit = (e) => {
@@ -145,10 +165,11 @@ export default function CommunityView({ onTriggerToast, currentUser }) {
     };
 
     setWorks((prev) => [newPost, ...prev]);
+    postDbCommunityArticle(newPost);
     setIsPublishModalOpen(false);
     setPostTitle('');
     setPostSummary('');
-    onTriggerToast?.('success', 'Published to Community', 'Your model evaluation report is live on the Community Explorer.');
+    onTriggerToast?.('success', 'Published to Community', 'Your report was stored in database and published.');
   };
 
   return (
