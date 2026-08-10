@@ -6,7 +6,8 @@ function getBaseApiUrl() {
 
   if (typeof window !== 'undefined') {
     const origin = window.location.origin;
-    if (origin && origin !== 'null' && !origin.includes(':5173')) {
+    const isDevPort = /:(3000|5173|5174|5175|8080|4173)$/.test(origin);
+    if (origin && origin !== 'null' && !isDevPort) {
       return `${origin}/api`;
     }
   }
@@ -26,7 +27,7 @@ export function getApiHost() {
 }
 
 /**
- * Generate realistic fallback prediction payload when backend server is offline or restarting
+ * Generate fallback prediction payload when backend server is offline or restarting
  */
 function getMockFallbackPrediction(sampleName) {
   const sampleMap = {
@@ -39,51 +40,66 @@ function getMockFallbackPrediction(sampleName) {
 
   const detectedTerrain = sampleMap[sampleName] || 'rocky';
 
-  const implicitQuantities = {
+  const mockAnalysis = {
     rocky: {
-      roughness: { value_ra: 0.88, qualitative: 'High', description: 'Jagged boulders and loose cobble.' },
-      slipperiness: { friction_coefficient: 0.75, qualitative: 'Low', description: 'High dry friction.' },
-      treacherousness: { hazard_level: 3, qualitative: 'Moderate', description: 'Chassis scrape risk.' },
-      surface_stability: { status: 'Stable', bearing_capacity_kpa: 350 },
-      hydration: { moisture_pct: 12, qualitative: 'Low' },
-      vegetation: { density_pct: 10, qualitative: 'Low' },
-      perception_telemetry: { traversal_safety_index: 74, recommended_max_speed_kmh: 18, wheel_grip_index: 78, recommended_drive_mode: '4WD Low / Rock Crawl' }
+      visual_roughness: { index: 88, qualitative: 'High / Severe Roughness', description: 'Jagged boulders & irregular relief' },
+      visual_wetness: { index: 12, qualitative: 'Low / Arid Surface', description: 'Minimal surface liquid cues' },
+      traction_potential: 78,
+      ground_stability: { score: 92, status: 'High Stability / Hard Substrate' },
+      hazard_rating: 3,
+      hazard_factors: ['High surface roughness & irregular relief', 'Chassis scrape risk'],
+      rover_safety_score: 74,
+      traversal_mode: 'ROCK CRAWL',
+      drive_profile: '4WD Low / Rock Crawl',
+      recommended_speed_range: '5–12 km/h'
     },
     marshy: {
-      roughness: { value_ra: 0.48, qualitative: 'Moderate', description: 'Uneven mud and root pools.' },
-      slipperiness: { friction_coefficient: 0.22, qualitative: 'High', description: 'Slick waterlogged soil.' },
-      treacherousness: { hazard_level: 4, qualitative: 'High', description: 'Wheel spinning risk.' },
-      surface_stability: { status: 'Unstable', bearing_capacity_kpa: 45 },
-      hydration: { moisture_pct: 92, qualitative: 'Very High' },
-      vegetation: { density_pct: 45, qualitative: 'Moderate' },
-      perception_telemetry: { traversal_safety_index: 38, recommended_max_speed_kmh: 12, wheel_grip_index: 30, recommended_drive_mode: '4WD Low / Mud & Ruts' }
+      visual_roughness: { index: 48, qualitative: 'Moderate Surface Relief', description: 'Uneven mud & root pools' },
+      visual_wetness: { index: 92, qualitative: 'High / Waterlogged Cues', description: 'Dark reflectivity & water highlights' },
+      traction_potential: 30,
+      ground_stability: { score: 25, status: 'Unstable / Deformable Substrate' },
+      hazard_rating: 4,
+      hazard_factors: ['Elevated moisture & slippage risk', 'Deformable terrain'],
+      rover_safety_score: 38,
+      traversal_mode: 'STOP / AVOID',
+      drive_profile: '4WD Low / Mud & Ruts',
+      recommended_speed_range: '0–5 km/h'
     },
     grassy: {
-      roughness: { value_ra: 0.25, qualitative: 'Low', description: 'Smooth turf.' },
-      slipperiness: { friction_coefficient: 0.55, qualitative: 'Moderate', description: 'Moderate traction.' },
-      treacherousness: { hazard_level: 1, qualitative: 'Low', description: 'Minimal traversal risk.' },
-      surface_stability: { status: 'Stable', bearing_capacity_kpa: 180 },
-      hydration: { moisture_pct: 35, qualitative: 'Moderate' },
-      vegetation: { density_pct: 85, qualitative: 'High' },
-      perception_telemetry: { traversal_safety_index: 92, recommended_max_speed_kmh: 45, wheel_grip_index: 85, recommended_drive_mode: 'Normal / 2WD' }
+      visual_roughness: { index: 25, qualitative: 'Low / Smooth Surface', description: 'Smooth turf texture' },
+      visual_wetness: { index: 35, qualitative: 'Moderate Moisture Cues', description: 'Damp vegetation spectrum' },
+      traction_potential: 85,
+      ground_stability: { score: 88, status: 'High Stability / Firm Ground' },
+      hazard_rating: 1,
+      hazard_factors: ['Favorable terrain traversal conditions'],
+      rover_safety_score: 92,
+      traversal_mode: 'NORMAL',
+      drive_profile: 'Standard 2WD / Normal Traversal',
+      recommended_speed_range: '20–35 km/h'
     },
     sandy: {
-      roughness: { value_ra: 0.42, qualitative: 'Moderate', description: 'Granular shifting dunes.' },
-      slipperiness: { friction_coefficient: 0.45, qualitative: 'Moderate', description: 'Particulate shear slip.' },
-      treacherousness: { hazard_level: 2, qualitative: 'Low-Mod', description: 'Loose momentum risk.' },
-      surface_stability: { status: 'Granular', bearing_capacity_kpa: 95 },
-      hydration: { moisture_pct: 8, qualitative: 'Low' },
-      vegetation: { density_pct: 5, qualitative: 'Very Low' },
-      perception_telemetry: { traversal_safety_index: 81, recommended_max_speed_kmh: 30, wheel_grip_index: 62, recommended_drive_mode: 'Sand Mode / Deflated Pressure' }
+      visual_roughness: { index: 42, qualitative: 'Moderate Surface Relief', description: 'Granular shifting dunes' },
+      visual_wetness: { index: 8, qualitative: 'Low / Arid Surface', description: 'Dry particulate medium' },
+      traction_potential: 62,
+      ground_stability: { score: 55, status: 'Moderate Stability / Granular' },
+      hazard_rating: 2,
+      hazard_factors: ['Loose grain momentum displacement'],
+      rover_safety_score: 81,
+      traversal_mode: 'CAUTIOUS',
+      drive_profile: 'Sand Mode / Deflated Pressure',
+      recommended_speed_range: '12–20 km/h'
     },
     snowy: {
-      roughness: { value_ra: 0.65, qualitative: 'High', description: 'Compacted ice ridges.' },
-      slipperiness: { friction_coefficient: 0.18, qualitative: 'Very High', description: 'Sub-zero ice crust.' },
-      treacherousness: { hazard_level: 4, qualitative: 'High', description: 'Icy drift risk.' },
-      surface_stability: { status: 'Slippery', bearing_capacity_kpa: 60 },
-      hydration: { moisture_pct: 60, qualitative: 'Frozen' },
-      vegetation: { density_pct: 5, qualitative: 'Very Low' },
-      perception_telemetry: { traversal_safety_index: 42, recommended_max_speed_kmh: 15, wheel_grip_index: 25, recommended_drive_mode: 'Snow & Ice Lock / Chains' }
+      visual_roughness: { index: 65, qualitative: 'High / Severe Roughness', description: 'Compacted ice ridges' },
+      visual_wetness: { index: 60, qualitative: 'Moderate Moisture Cues', description: 'Sub-zero frozen crust' },
+      traction_potential: 25,
+      ground_stability: { score: 40, status: 'Unstable / Deformable Substrate' },
+      hazard_rating: 4,
+      hazard_factors: ['Severe ice lubrication & skidding risk'],
+      rover_safety_score: 42,
+      traversal_mode: 'STOP / AVOID',
+      drive_profile: 'Snow & Ice Lock / Chains',
+      recommended_speed_range: '0–5 km/h'
     }
   };
 
@@ -102,15 +118,23 @@ function getMockFallbackPrediction(sampleName) {
       sandy: detectedTerrain === 'sandy' ? 0.94 : 0.01,
       snowy: detectedTerrain === 'snowy' ? 0.94 : 0.00
     },
-    implicit_quantities: implicitQuantities[detectedTerrain],
+    probabilities: {
+      grassy: detectedTerrain === 'grassy' ? 0.94 : 0.02,
+      marshy: detectedTerrain === 'marshy' ? 0.94 : 0.01,
+      rocky: detectedTerrain === 'rocky' ? 0.94 : 0.02,
+      sandy: detectedTerrain === 'sandy' ? 0.94 : 0.01,
+      snowy: detectedTerrain === 'snowy' ? 0.94 : 0.00
+    },
+    implicit_quantities: mockAnalysis[detectedTerrain],
+    analysis: mockAnalysis[detectedTerrain],
     gradcam_base64: null,
     inference_time_ms: 38,
-    model_version: 'terrain-cnn-v1.2.0-mock'
+    model_version: 'terrain-cnn-v1.2.0-fallback'
   };
 }
 
 /**
- * Perform Terrain Recognition Prediction via Flask Backend with automatic Demo Mock fallback
+ * Perform Terrain Recognition Prediction via Flask Backend
  */
 export async function predictTerrain({ sampleName, base64Image, imageFile }) {
   const tryUrls = [
@@ -146,29 +170,49 @@ export async function predictTerrain({ sampleName, base64Image, imageFile }) {
         if (response.ok) {
           const data = await response.json();
           if (data.success) {
+            const predTerrain = data.classification?.label || data.predicted_terrain || 'unknown';
+            const conf = data.classification?.confidence ?? data.confidence ?? 0.0;
+            const probs = data.probabilities || data.all_probabilities || {};
+            const analysisData = data.analysis || data.implicit_quantities || null;
+
             return {
               success: true,
               source: `CNN Inference Engine (${baseUrl})`,
-              terrain: data.predicted_terrain,
-              predicted_terrain: data.predicted_terrain,
-              confidence: data.confidence,
-              unsupported_image: data.unsupported_image || false,
+              terrain: predTerrain,
+              predicted_terrain: predTerrain,
+              confidence: conf,
+              unsupported_image: data.unsupported_image || (predTerrain === 'unknown'),
               rejection_reason: data.rejection_reason || null,
-              probabilities: data.all_probabilities || {},
-              implicit: data.implicit_quantities || null,
+              probabilities: probs,
+              all_probabilities: probs,
+              implicit: analysisData,
+              analysis: analysisData,
               gradcam_base64: data.gradcam_base64 || null,
-              inference_time_ms: data.inference_time_ms || 0,
+              inference_time_ms: data.inference?.latency_ms || data.inference_time_ms || 0,
               model_version: data.model_version || 'terrain-cnn-v1.2.0'
             };
           }
         }
       }
     } catch (error) {
-      // Continue
+      // Continue next attempt
     }
   }
 
-  return getMockFallbackPrediction(sampleName);
+  // All real backend attempts failed — log explicitly so the failure is visible in the browser console
+  console.error(
+    '[TerrainVision] ⚠️ All backend API attempts failed. Tried URLs:',
+    tryUrls.map(u => `${u}/predict`),
+    '\nThe backend server (api_server.py) may not be running on port 5000.',
+    '\nReturning backend-offline error instead of mock data.'
+  );
+
+  // Return a real error — do NOT silently return mock data
+  return {
+    success: false,
+    error: 'Backend inference server is unreachable. Please ensure api_server.py is running on port 5000.',
+    is_backend_offline: true
+  };
 }
 
 /**

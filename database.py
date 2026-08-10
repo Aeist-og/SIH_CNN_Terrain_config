@@ -330,17 +330,17 @@ def export_to_csv() -> str:
         writer = csv.writer(output)
         
         writer.writerow(["=== TERRAINVISION AI - CLASSIFICATION & TELEMETRY LOGS ==="])
-        writer.writerow(["ID", "Timestamp", "Predicted Terrain", "Confidence", "Status", "Roughness (Ra)", "Friction (mu)", "Hazard Level", "Bearing Capacity", "Drive Mode"])
+        writer.writerow(["ID", "Timestamp", "Predicted Terrain", "Confidence", "Status", "Visual Roughness Index", "Visual Wetness Indicator", "Hazard Rating", "Rover Safety Score", "Traversal Mode"])
         
         cursor.execute('SELECT * FROM analyses ORDER BY id DESC')
         rows = cursor.fetchall()
         for r in rows:
-            implicit = json.loads(r['implicit_quantities']) if r['implicit_quantities'] else {}
-            rough = implicit.get('roughness', {}).get('value_ra', 'N/A')
-            fric = implicit.get('slipperiness', {}).get('friction_coefficient', 'N/A')
-            haz = implicit.get('treacherousness', {}).get('hazard_level', 'N/A')
-            bear = implicit.get('surface_stability', {}).get('bearing_capacity_kpa', 'N/A')
-            drive = implicit.get('perception_telemetry', {}).get('recommended_drive_mode', 'N/A')
+            analysis = json.loads(r['implicit_quantities']) if r['implicit_quantities'] else {}
+            rough = analysis.get('visual_roughness', {}).get('index', 'N/A')
+            wet = analysis.get('visual_wetness', {}).get('index', 'N/A')
+            haz = analysis.get('hazard_rating', 'N/A')
+            safety = analysis.get('rover_safety_score', 'N/A')
+            drive = analysis.get('traversal_mode', 'N/A')
             
             writer.writerow([
                 r['id'],
@@ -348,7 +348,7 @@ def export_to_csv() -> str:
                 r['predicted_terrain'],
                 f"{r['confidence']*100:.1f}%",
                 "Rejected" if r['unsupported_image'] else "Verified",
-                rough, fric, haz, bear, drive
+                rough, wet, haz, safety, drive
             ])
             
         writer.writerow([])

@@ -7,11 +7,11 @@ from tensorflow.keras.models import load_model # type: ignore
 from .config import (
     MODEL_PATH,
     TERRAIN_CLASSES,
-    CONFIDENCE_THRESHOLD,
-    MODEL_VERSION,
-    IMPLICIT_QUANTITIES
+    MODEL_VERSION
 )
 from .preprocessing import preprocess_for_inference
+from .validation import validate_image_input, evaluate_ood_status
+from .terrain_analysis import analyze_terrain_from_image
 from .explainability import generate_gradcam_heatmap, image_to_base64_data_url
 
 class TerrainPredictor:
@@ -23,11 +23,13 @@ class TerrainPredictor:
         self.load_model_weights()
 
     def load_model_weights(self):
+        """Loads trained Keras model with compile=False for fast initialization (~1.8s)."""
         if os.path.exists(self.model_path):
             try:
-                print(f"[ModelPipeline] Loading trained CNN model from {self.model_path}...")
-                self.model = load_model(self.model_path)
-                print("[ModelPipeline] Model loaded successfully!")
+                print(f"[ModelPipeline] Loading CNN terrain model from {self.model_path} (compile=False)...")
+                t0 = time.time()
+                self.model = load_model(self.model_path, compile=False)
+                print(f"[ModelPipeline] Model loaded successfully in {time.time() - t0:.2f}s!")
             except Exception as e:
                 print(f"[ModelPipeline] Error loading model weights: {e}")
                 self.model = None
@@ -47,50 +49,104 @@ class TerrainPredictor:
                 'model_version': MODEL_VERSION
             }
 
-        # 1. Preprocess
+        # 1. Image Pre-Validation
+        is_valid, validation_error = validate_image_input(pil_image)
+        if not is_valid:
+            return {
+                'success': True,
+                'classification': {
+                    'label': 'unknown',
+                    'confidence': 0.0,
+                    'status': 'rejected'
+                },
+                'predicted_terrain': 'unknown',
+                'confidence': 0.0,
+                'unsupported_image': True,
+                'rejection_reason': validation_error,
+                'probabilities': {cls: 0.0 for cls in TERRAIN_CLASSES},
+                'all_probabilities': {cls: 0.0 for cls in TERRAIN_CLASSES},
+                'analysis': None,
+                'implicit_quantities': None,
+                'gradcam_base64': None,
+                'inference_time_ms': int((time.time() - start_time) * 1000),
+                'model_version': MODEL_VERSION,
+                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+            }
+
+        # 2. Preprocess Image
         processed_img = preprocess_for_inference(pil_image)
 
-        # 2. Perform Model Inference
+        # 3. Model Inference & Softmax Normalization
         raw_preds = self.model.predict(processed_img, verbose=0)[0]
-        pred_idx = int(np.argmax(raw_preds))
-        confidence = float(raw_preds[pred_idx])
+        
+        # Ensure numerical stability and exact probability sum = 1.0
+        exp_preds = np.exp(raw_preds - np.max(raw_preds)) if np.max(raw_preds) > 10.0 else raw_preds
+        probs = exp_preds / np.sum(exp_preds)
+        
+        pred_idx = int(np.argmax(probs))
+        confidence = float(probs[pred_idx])
+        
+        # Sort probabilities to compute margin (p_top1 - p_top2)
+        sorted_probs = np.sort(probs)[::-1]
+        margin = float(sorted_probs[0] - sorted_probs[1]) if len(sorted_probs) > 1 else float(sorted_probs[0])
+        
+        # Calculate Shannon entropy (H = -sum p_i ln p_i)
+        safe_probs = np.clip(probs, 1e-12, 1.0)
+        entropy = float(-np.sum(safe_probs * np.log(safe_probs)))
 
-        all_probs = {TERRAIN_CLASSES[i]: float(raw_preds[i]) for i in range(len(TERRAIN_CLASSES))}
+        all_probs = {TERRAIN_CLASSES[i]: float(probs[i]) for i in range(len(TERRAIN_CLASSES))}
 
-        # 3. Check Confidence Threshold Rejection (Phase 4 requirement)
-        if confidence < CONFIDENCE_THRESHOLD:
-            predicted_terrain = "Unsupported Image"
+        # 4. Two-Stage OOD / Unknown Decision Logic
+        is_rejected, status_label, rejection_reason = evaluate_ood_status(
+            probabilities=all_probs,
+            top_confidence=confidence,
+            entropy_val=entropy,
+            margin_val=margin,
+            pil_img=pil_image
+        )
+
+        if is_rejected:
+            predicted_terrain = "unknown"
             is_unsupported = True
-            rejection_reason = (
-                f"Classification confidence ({confidence:.1%}) is below the required "
-                f"{CONFIDENCE_THRESHOLD * 100:.0f}% safety threshold. The input image does not "
-                "match any supported terrain category."
-            )
-            implicit = None
+            analysis = None
         else:
             predicted_terrain = TERRAIN_CLASSES[pred_idx]
             is_unsupported = False
-            rejection_reason = None
-            implicit = IMPLICIT_QUANTITIES.get(predicted_terrain, IMPLICIT_QUANTITIES['grassy'])
+            # Calculate dynamic visual indicators and traversability heuristics
+            analysis = analyze_terrain_from_image(pil_image, predicted_terrain, confidence)
 
-        # 4. Generate AI Explainability (Grad-CAM)
+        # 5. Explainability (Grad-CAM) Heatmap
         gradcam_b64 = None
-        if self.model and not is_unsupported:
+        if self.model and not is_rejected:
             gradcam_pil = generate_gradcam_heatmap(self.model, processed_img, pred_idx)
             if gradcam_pil:
                 gradcam_b64 = image_to_base64_data_url(gradcam_pil)
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 
+        # Clean API Response Schema matching Master Prompt specifications
         return {
             'success': True,
+            'classification': {
+                'label': predicted_terrain,
+                'confidence': round(confidence, 4),
+                'status': status_label,
+                'entropy': round(entropy, 4),
+                'margin': round(margin, 4)
+            },
+            'probabilities': all_probs,
+            # Dual output format for backward compatibility with frontend consumers
             'predicted_terrain': predicted_terrain,
-            'confidence': confidence,
+            'confidence': round(confidence, 4),
             'unsupported_image': is_unsupported,
             'rejection_reason': rejection_reason,
             'all_probabilities': all_probs,
-            'implicit_quantities': implicit,
+            'analysis': analysis,
+            'implicit_quantities': analysis,  # maps to analysis for frontend
             'gradcam_base64': gradcam_b64,
+            'inference': {
+                'latency_ms': elapsed_ms
+            },
             'inference_time_ms': elapsed_ms,
             'model_version': MODEL_VERSION,
             'timestamp': time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())

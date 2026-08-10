@@ -111,7 +111,7 @@ export default function LandingView({ onEnterWorkspace, onLoginSuccess }) {
       <section className="relative z-10 mx-auto max-w-6xl px-6 py-16 lg:py-24 text-center space-y-8">
         <div className="inline-flex items-center gap-2 rounded-full border border-[#10b981]/30 bg-[#10b981]/10 px-4 py-1.5 text-xs text-[#10b981] font-medium backdrop-blur-md">
           <SparklesIcon className="h-4 w-4" />
-          <span>Smart India Hackathon Autonomous Perception Architecture</span>
+
         </div>
 
         <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-[#f9fafb] leading-tight max-w-4xl mx-auto">

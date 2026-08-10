@@ -5,7 +5,7 @@ from PIL import Image
 import tensorflow as tf
 
 def find_last_conv_layer(model):
-    """Locate the name of the final Conv2D layer in the Keras sequential/functional model."""
+    """Locate the name of the final Conv2D layer in the Keras model."""
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Conv2D) or 'conv' in layer.name.lower():
             return layer.name
@@ -13,7 +13,7 @@ def find_last_conv_layer(model):
 
 def generate_gradcam_heatmap(model, img_array, pred_index=None):
     """
-    Computes real Grad-CAM heatmaps for a Keras model and image array.
+    Computes real Grad-CAM heatmaps for Keras 2 / 3 models and image array.
     Returns PIL Image of overlaid Grad-CAM, or None if unavailable.
     """
     try:
@@ -21,30 +21,54 @@ def generate_gradcam_heatmap(model, img_array, pred_index=None):
         if not layer_name:
             return None
 
-        conv_layer = model.get_layer(layer_name)
+        img_tensor = tf.convert_to_tensor(img_array, dtype=tf.float32)
 
-        # Construct gradient model
-        grad_model = tf.keras.models.Model(
-            inputs=[model.inputs],
-            outputs=[conv_layer.output, model.output]
-        )
+        # Build gradient tape directly over sequential / functional layers
+        conv_layer = model.get_layer(layer_name)
+        
+        # Sub-model up to conv_layer
+        sub_layers = []
+        for layer in model.layers:
+            sub_layers.append(layer)
+            if layer.name == layer_name:
+                break
+                
+        remaining_layers = model.layers[len(sub_layers):]
 
         with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
+            # Forward pass up to conv layer
+            x = img_tensor
+            for layer in sub_layers:
+                x = layer(x)
+            conv_outputs = x
+            tape.watch(conv_outputs)
+            
+            # Forward pass through remaining layers
+            y = conv_outputs
+            for layer in remaining_layers:
+                y = layer(y)
+            predictions = y
+            
             if pred_index is None:
                 pred_index = tf.argmax(predictions[0])
             loss = predictions[:, pred_index]
 
-        # Extract gradients of target score w.r.t feature map
+        # Extract gradients of target class w.r.t conv outputs
         grads = tape.gradient(loss, conv_outputs)
+        if grads is None:
+            return None
+            
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
-        conv_outputs = conv_outputs[0]
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        conv_outputs_val = conv_outputs[0]
+        heatmap = conv_outputs_val @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
 
-        # Apply ReLU activation to heatmaps
-        heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-10)
+        # Apply ReLU activation and normalize heatmap
+        heatmap = tf.maximum(heatmap, 0)
+        max_heat = tf.reduce_max(heatmap)
+        if max_heat > 0:
+            heatmap = heatmap / max_heat
         heatmap = heatmap.numpy()
 
         if np.isnan(heatmap).any():

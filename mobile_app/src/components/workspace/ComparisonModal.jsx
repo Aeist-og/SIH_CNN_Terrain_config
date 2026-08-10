@@ -70,12 +70,12 @@ export default function ComparisonModal({ isOpen, onClose, currentScan, history 
                       <span className="font-bold text-[#EDF1EC]">{Math.round((currentScan.confidence || 0) * 100)}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#A7B0AA]">Roughness (Ra):</span>
-                      <span>{currentScan.implicit_quantities?.roughness?.value_ra || '0.25'} µm</span>
+                      <span className="text-[#A7B0AA]">Visual Roughness:</span>
+                      <span>{currentScan.implicit_quantities?.visual_roughness?.index ?? '50'} / 100</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#A7B0AA]">Drive Mode:</span>
-                      <span>{currentScan.implicit_quantities?.perception_telemetry?.recommended_drive_mode || 'Normal'}</span>
+                      <span className="text-[#A7B0AA]">Traversal Mode:</span>
+                      <span>{currentScan.implicit_quantities?.traversal_mode || 'NORMAL'}</span>
                     </div>
                   </div>
                 </>
@@ -113,8 +113,8 @@ export default function ComparisonModal({ isOpen, onClose, currentScan, history 
                       <span>{compareItem.timestamp || 'Recent'}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#A7B0AA]">Drive Mode:</span>
-                      <span>{compareItem.implicit?.perception_telemetry?.recommended_drive_mode || 'Standard'}</span>
+                      <span className="text-[#A7B0AA]">Traversal Mode:</span>
+                      <span>{compareItem.implicit?.traversal_mode || 'NORMAL'}</span>
                     </div>
                   </div>
                 </>

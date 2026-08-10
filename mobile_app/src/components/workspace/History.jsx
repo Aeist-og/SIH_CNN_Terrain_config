@@ -143,7 +143,7 @@ export default function History({ history = [], onQuickAnalyze, onTriggerToast }
                         </span>
                       </td>
                       <td className="px-5 py-3 font-mono-code text-xs text-[#9ca3af]">
-                        {item.implicit?.roughness?.value_ra ? `${item.implicit.roughness.value_ra} µm` : '0.25 µm'} • {item.implicit?.perception_telemetry?.recommended_drive_mode || 'Normal'}
+                        Roughness: {item.implicit?.visual_roughness?.index ?? 50}/100 • Mode: {item.implicit?.traversal_mode || 'NORMAL'}
                       </td>
                       <td className="px-5 py-3 text-xs text-[#9ca3af]">{item.timestamp}</td>
                       <td className="px-5 py-3 text-right">
